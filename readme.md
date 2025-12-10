@@ -1,11 +1,15 @@
-# COMPEL
+<h3>
+    <p align="center">COMPEL</p>
+    <p>Heroes Of Newerth match server launcher to connect to the Project KONGOR services.</p>
+    <p>If you would like to support the development of this project and buy me a coffee, please consider one of the following options: <a href="https://github.com/sponsors/K-O-N-G-O-R">GitHub Sponsors</a>, <a href="https://paypal.me/MissingLinkMedia">PayPal</a>. 💚</p>
+</h3>
 
-#### Project KONGOR Game Server Launcher 
-#### Part Of Project KONGOR
+<hr/>
 
 <br/>
 
-#### NOTES
+TODO
 
-1. Game server binaries which do not match the 4.10.1 manifest checksums will not be accepted by the masterserver.
-2. All ports on which game servers run must be correctly forwarded.
+description and usage instructions go here
+
+<br/>
