@@ -14,5 +14,5 @@ internal static class CONTEXT
 
     internal static string ServerAddress = HANDLERS.GetServerAddress().GetAwaiter().GetResult();
     internal static string MasterServerAddress = HANDLERS.GetMasterServerAddress();
-    internal static string MasterServerAddressAndPort = MasterServerAddress + (CONTEXT.JSONConfiguration.HostingEnvironment!.Value!.ToUpper().Equals("LOCAL") ? ":666" : string.Empty /* Port 80 Is Implied */ );
+    internal static string MasterServerAddressAndPort = MasterServerAddress + (CONTEXT.JSONConfiguration.HostingEnvironment!.Value!.ToUpper().Equals("LOCAL") ? ":55555" : string.Empty /* Port 80 Is Implied */ );
 }

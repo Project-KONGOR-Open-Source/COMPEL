@@ -209,7 +209,7 @@ internal static class HANDLERS
         CONTEXT.JSONConfiguration.HostingEnvironment!.Value!.ToUpper().Equals("LOCAL")
             ? "127.0.0.1"
             : (CONTEXT.JSONConfiguration.HostingEnvironment!.Value!.ToUpper().Equals("PUBLIC")
-                ? "api.kongor.online"
+                ? "api.kongor.net"
                 : CONTEXT.JSONConfiguration.HostingEnvironment!.Value);
 
     internal static async Task<string> GetServerAddress() =>
