@@ -36,7 +36,7 @@ settings["man_uploadToCDNOnDemand"] = "0";
 
 // Any Server Configuration Options Other Than The Ones Below Get Completely Ignored
 settings["svr_name"] = HANDLERS.ServerNameWithWhiteSpaceCharacters(CONTEXT.JSONConfiguration.ServerNamePrefix!.Value!);
-settings["svr_desc"] = "Project KONGOR";
+// settings["svr_desc"] = "Project KONGOR"; // The Server Manager Does Not Support Setting The Server Description
 settings["svr_location"] = CONTEXT.JSONConfiguration.Location!.Value!;
 settings["svr_ip"] = CONTEXT.ServerAddress;
 
