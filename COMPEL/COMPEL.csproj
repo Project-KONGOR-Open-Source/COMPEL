@@ -2,7 +2,7 @@
 
 	<PropertyGroup>
 		<OutputType>EXE</OutputType>
-		<TargetFramework>NET7.0</TargetFramework>
+		<TargetFramework>NET10.0</TargetFramework>
 		<ImplicitUsings>ENABLE</ImplicitUsings>
 		<Nullable>ENABLE</Nullable>
 		<ApplicationIcon>COMPEL.ICO</ApplicationIcon>
