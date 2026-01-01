@@ -89,7 +89,7 @@ if ((bool)CONTEXT.JSONConfiguration.UseProxy!.Value!)
     }
 }
 
-ProcessStartInfo updaterProcessInfo = new("hon_update_x64.exe")
+ProcessStartInfo updaterProcessInfo = new("hon_x64.exe")
 {
     EnvironmentVariables = { ["USERPROFILE"] = Path.Combine(CONTEXT.RuntimeArtefactsPath) },
     Arguments = string.Join(' ', arguments)
