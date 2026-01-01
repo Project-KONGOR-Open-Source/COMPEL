@@ -43,7 +43,7 @@ settings["svr_ip"] = CONTEXT.ServerAddress;
 settings["host_affinity"] = "-1";
 
 // Enable Auto-Update
-settings["upd_checkForUpdates"] = "true";
+settings["upd_checkForUpdates"] = "false";
 
 // Port For Listening To Pings From The Master Server
 settings["svr_port"] = ((bool)CONTEXT.JSONConfiguration.UseProxy!.Value! ? 21234 : 11234) + CONTEXT.JSONConfiguration.PortRangeOffset!.Value;
