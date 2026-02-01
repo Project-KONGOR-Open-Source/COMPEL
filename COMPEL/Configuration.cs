@@ -64,7 +64,7 @@ public class Gateway
     public string? Value { get; set; }
 
     [JsonPropertyName("Description")]
-    public string Description => "The entry point for game servers and the server manager. Use 'api.kongor.net' for the official public gateway, 'localhost:5555' for local development, an LAN or public IP address with an optional port, or a hostname to resolve.";
+    public string Description => "The entry point for game servers and the server manager. Use 'api.kongor.net' for the official public gateway, 'localhost' for local development, a LAN or public IP address, or a local or public host name to resolve.";
 }
 
 public class Location

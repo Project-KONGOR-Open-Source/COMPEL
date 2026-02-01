@@ -205,25 +205,12 @@ internal static class HANDLERS
         return json;
     }
 
-    internal static (string Host, int? Port) ParseGateway()
+    internal static string GetMasterServerAddress()
     {
         string gateway = CONTEXT.JSONConfiguration.Gateway!.Value!;
 
-        // Check For Port Separator
-        int lastColonIndex = gateway.LastIndexOf(':');
-
-        if (lastColonIndex > 0 && int.TryParse(gateway[(lastColonIndex + 1)..], out int port))
-            return (gateway[..lastColonIndex], port);
-
-        return (gateway, null);
-    }
-
-    internal static string GetMasterServerAddress()
-    {
-        (string host, _) = ParseGateway();
-
         // Localhost Uses Local Master Server
-        if (host.ToUpper() is "LOCALHOST" or "127.0.0.1")
+        if (gateway.ToUpper() is "LOCALHOST" or "127.0.0.1")
             return "127.0.0.1";
 
         // Otherwise Use Public Master Server
@@ -232,16 +219,11 @@ internal static class HANDLERS
 
     internal static string GetMasterServerAddressAndPort()
     {
-        (string host, int? port) = ParseGateway();
-
+        string gateway = CONTEXT.JSONConfiguration.Gateway!.Value!;
         string address = GetMasterServerAddress();
 
-        // Use Custom Port If Specified
-        if (port is not null)
-            return $"{address}:{port}";
-
         // Default Ports: 5555 For Localhost, 80 (Implied) For Public
-        if (host.ToUpper() is "LOCALHOST" or "127.0.0.1")
+        if (gateway.ToUpper() is "LOCALHOST" or "127.0.0.1")
             return $"{address}:5555";
 
         return address;
@@ -249,28 +231,28 @@ internal static class HANDLERS
 
     internal static async Task<string> GetServerAddress()
     {
-        (string host, _) = ParseGateway();
+        string gateway = CONTEXT.JSONConfiguration.Gateway!.Value!;
 
         // Handle Localhost
-        if (host.ToUpper() is "LOCALHOST")
+        if (gateway.ToUpper() is "LOCALHOST")
             return "127.0.0.1";
 
         // Handle Public Gateway (Auto-Detect Public IP)
-        if (host.ToUpper() is "API.KONGOR.NET")
+        if (gateway.ToUpper() is "API.KONGOR.NET")
             return await DetectPublicIPAddress();
 
         // If Already An IP Address, Use It Directly
-        if (IPAddress.TryParse(host, out IPAddress? parsedIP))
+        if (IPAddress.TryParse(gateway, out IPAddress? parsedIP))
             return parsedIP.MapToIPv4().ToString();
 
         // Resolve Hostname To IP Address
-        IPAddress[] addresses = Dns.GetHostAddresses(host);
+        IPAddress[] addresses = Dns.GetHostAddresses(gateway);
         IPAddress? ipv4Address = addresses.FirstOrDefault(address => address.AddressFamily == AddressFamily.InterNetwork);
 
         if (ipv4Address is not null)
             return ipv4Address.ToString();
 
-        throw new InvalidOperationException($@"Unable To Resolve Gateway ""{host}"" To An IPv4 Address");
+        throw new InvalidOperationException($@"Unable To Resolve Gateway ""{gateway}"" To An IPv4 Address");
     }
 
     private static async Task<string> DetectPublicIPAddress()
@@ -303,9 +285,9 @@ internal static class HANDLERS
 
     internal static void HandleMasterServerPing()
     {
-        (string host, _) = ParseGateway();
+        string gateway = CONTEXT.JSONConfiguration.Gateway!.Value!;
 
-        if (host.ToUpper() is "LOCALHOST" or "127.0.0.1")
+        if (gateway.ToUpper() is "LOCALHOST" or "127.0.0.1")
         {
             Console.WriteLine("Master Server Was Not Pinged (Gateway Is Localhost)");
         }
