@@ -116,7 +116,7 @@ internal static class HANDLERS
                 UserName = new UserName { Value = "USERNAME" },
                 Password = new Password { Value = "PASSWORD" },
                 Instances = new Instances { Value = 1 },
-                Gateway = new Gateway { Value = "api.kongor.net" },
+                Gateway = new Gateway { Value = "kongor.net" },
                 Location = new Location { Value = "EU" },
                 ServerNamePrefix = new ServerNamePrefix { Value = "KONGOR ARENA" },
                 UseProxy = new UseProxy { Value = true },
@@ -237,8 +237,8 @@ internal static class HANDLERS
         if (gateway.ToUpper() is "LOCALHOST")
             return "127.0.0.1";
 
-        // Handle Public Gateway (Auto-Detect Public IP)
-        if (gateway.ToUpper() is "API.KONGOR.NET")
+        // Handle Public IP Auto-Detection
+        if (gateway.ToUpper() is "PUBLIC")
             return await DetectPublicIPAddress();
 
         // If Already An IP Address, Use It Directly
