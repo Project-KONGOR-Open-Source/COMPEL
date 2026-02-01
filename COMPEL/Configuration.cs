@@ -12,8 +12,8 @@ public class CONFIGURATION
     [JsonPropertyName("Instances")]
     public Instances? Instances { get; set; }
 
-    [JsonPropertyName("HostingEnvironment")]
-    public HostingEnvironment? HostingEnvironment { get; set; }
+    [JsonPropertyName("Gateway")]
+    public Gateway? Gateway { get; set; }
 
     [JsonPropertyName("Location")]
     public Location? Location { get; set; } // TODO: Remove And Set Programatically
@@ -58,13 +58,13 @@ public class Instances
     public string Description => "The number of server instances to spawn. Instances are spawned with the process priority set to real-time if launching COMPEL with elevated privileges, or to high priority if not.";
 }
 
-public class HostingEnvironment
+public class Gateway
 {
     [JsonPropertyName("Value")]
     public string? Value { get; set; }
 
     [JsonPropertyName("Description")]
-    public string Description => "Whether to connect to a 'local' or a 'public' master server. Always use 'public', unless you are hosting Project KONGOR locally.";
+    public string Description => "The entry point for game servers and the server manager. Use 'api.kongor.net' for the official public gateway, 'localhost:5555' for local development, an LAN or public IP address with an optional port, or a hostname to resolve.";
 }
 
 public class Location

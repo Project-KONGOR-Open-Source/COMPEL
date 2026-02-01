@@ -18,7 +18,7 @@ internal static class CHECKS
         CheckUserName();
         CheckPassword();
         CheckInstances();
-        CheckHostingEnvironment();
+        CheckGateway();
         CheckLocation();
         CheckServerNamePrefix();
         CheckUseProxy();
@@ -88,26 +88,19 @@ internal static class CHECKS
         else { Console.WriteLine($"Number Of Instances To Spawn: {instances}"); }
     }
 
-    private static void CheckHostingEnvironment()
+    private static void CheckGateway()
     {
-        string? hostingEnvironment = CONTEXT.JSONConfiguration.HostingEnvironment?.Value;
+        string? gateway = CONTEXT.JSONConfiguration.Gateway?.Value;
 
-        if (hostingEnvironment is null)
+        if (string.IsNullOrWhiteSpace(gateway))
         {
-            Console.WriteLine(@"Missing Configuration Value For ""HostingEnvironment""");
+            Console.WriteLine(@"Missing Configuration Value For ""Gateway""");
             Console.ReadKey();
             Environment.Exit(1);
         }
 
-        if (new[] { "LOCAL", "PUBLIC" }.Contains(hostingEnvironment.ToUpper()).Equals(false))
-        {
-            Console.WriteLine($@"""{hostingEnvironment}"" Is Not A Valid Hosting Environment");
-            Console.WriteLine(@"Valid Hosting Environment: 1) local\LOCAL, 2) public\PUBLIC");
-            Console.ReadKey();
-            Environment.Exit(1);
-        }
-
-        else { Console.WriteLine($"Hosting Environment: {hostingEnvironment.ToUpper()}"); }
+        Console.WriteLine($"Gateway: {gateway}");
+        Console.WriteLine($"Server Address: {CONTEXT.ServerAddress}");
     }
 
     private static void CheckLocation()
