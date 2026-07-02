@@ -68,6 +68,9 @@ if ($IsWindows)
     }
 }
 
+# publish into a clean directory so nothing that accumulated from a previous run in this location (a synced HON distribution, or COMPEL.json/COMPEL.log/COMPEL.lock runtime files that may carry credentials) can be captured in the release archive
+if (Test-Path $PublishDirectory) { Remove-Item $PublishDirectory -Recurse -Force }
+
 & dotnet publish $ProjectPath "-p:PublishProfile=$ProfileName"
 
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish exited with code $LASTEXITCODE" }
