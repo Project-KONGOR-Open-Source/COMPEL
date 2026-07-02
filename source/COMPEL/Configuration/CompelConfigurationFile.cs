@@ -82,8 +82,8 @@ public sealed class CDNSynchronisationSetting
 
 public sealed class AuthenticationTokenSetting
 {
-    public string Value { get; set; } = string.Empty;
-    public string Description => "The bearer token that NEXUS and host operators must present to use the remote management endpoints (status, synchronisation, and instance lifecycle). Leave empty to disable remote management. The control plane serves plain HTTP, so expose it only on a trusted network or behind a TLS-terminating reverse proxy; otherwise the token travels in cleartext.";
+    public string Value { get; set; } = "...";
+    public string Description => "The bearer token that NEXUS and host operators must present to use the remote management endpoints (status, synchronisation, and instance lifecycle). Leave as '...' (or empty) to disable remote management. The control plane serves plain HTTP, so expose it only on a trusted network or behind a TLS-terminating reverse proxy; otherwise the token travels in cleartext.";
 }
 
 public sealed class ControlPlanePortSetting

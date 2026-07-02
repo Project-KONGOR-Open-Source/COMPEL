@@ -34,7 +34,7 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 | `PortRangeOffset` | Offset into the game/voice port windows; `base + offset + instances` must stay within the 100-port window. |
 | `RuntimeArtefactsPath` | `DEFAULT` (the host account's profile) or a fully qualified path. Windows only. |
 | `CDNSynchronisation` | Whether to synchronise the distribution from the CDN on startup; set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works). |
-| `AuthenticationToken` | Bearer token gating the management endpoints; leave empty to disable remote management. |
+| `AuthenticationToken` | Bearer token gating the management endpoints; leave as `...` to disable remote management. |
 | `ControlPlanePort` | TCP port for the HTTP control plane (default `8080`). |
 
 Infrastructure that hosts do not tune — the CDN host and per-OS variants, the master-server endpoint (derived from `Gateway`), and download concurrency — is hardcoded. The distribution is installed into the same directory as the COMPEL executable.

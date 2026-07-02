@@ -6,6 +6,9 @@ namespace COMPEL.Endpoints;
 /// </summary>
 internal static class ControlPlaneAuthentication
 {
+    // The Default, Unconfigured Token In "COMPEL.json". Treated The Same As An Empty Token (Remote Management Disabled) So The Generated Configuration Does Not Enable Management With A Known Placeholder.
+    private const string PlaceholderToken = "...";
+
     /// <summary>
     ///     Returns <see langword="null"/> when the request is authorised, or the failing <see cref="IResult"/> otherwise.
     /// </summary>
@@ -13,7 +16,7 @@ internal static class ControlPlaneAuthentication
     {
         ControlPlaneOptions options = httpContext.RequestServices.GetRequiredService<IOptions<ControlPlaneOptions>>().Value;
 
-        if (string.IsNullOrEmpty(options.AuthenticationToken))
+        if (string.IsNullOrEmpty(options.AuthenticationToken) || options.AuthenticationToken == PlaceholderToken)
             return Results.Text("The Control Plane Authentication Token Is Not Configured", statusCode: StatusCodes.Status503ServiceUnavailable);
 
         if (TryGetBearerToken(httpContext.Request, out string? presentedToken) is false)
