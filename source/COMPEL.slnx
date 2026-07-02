@@ -1,0 +1,4 @@
+<Solution>
+    <Project Path="COMPEL/COMPEL.csproj" DefaultStartup="true" />
+    <Project Path="COMPEL.Tests/COMPEL.Tests.csproj" />
+</Solution>
