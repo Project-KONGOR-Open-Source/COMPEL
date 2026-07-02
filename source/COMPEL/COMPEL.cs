@@ -181,19 +181,26 @@ catch (OptionsValidationException exception)
     return;
 }
 
-// Pings The Master Server (Unless The Gateway Is Loopback, Whose Master Server Is Local And Assumed Reachable). A Filtered ICMP Response Is Treated As Unreachable, As In The Legacy Startup Check.
+// Pings The Master Server (Unless The Gateway Is Loopback, Whose Master Server Is Local And Assumed Reachable), Reporting The Round-Trip Time On Success. A Filtered ICMP Response Is Treated As Unreachable, As In The Legacy Startup Check.
 static async Task<bool> MasterServerIsReachable(string gateway)
 {
     if (gateway.Equals("localhost", StringComparison.OrdinalIgnoreCase) || gateway.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
         return true;
 
+    const string masterServerHost = "api.kongor.net";
+
     try
     {
         using Ping ping = new ();
 
-        PingReply reply = await ping.SendPingAsync("api.kongor.net", TimeSpan.FromSeconds(5));
+        PingReply reply = await ping.SendPingAsync(masterServerHost, TimeSpan.FromSeconds(5));
 
-        return reply.Status is IPStatus.Success;
+        if (reply.Status is not IPStatus.Success)
+            return false;
+
+        Console.WriteLine($@"Master Server ""{masterServerHost}"" Is Reachable ({reply.RoundtripTime} ms).");
+
+        return true;
     }
 
     catch
