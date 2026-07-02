@@ -22,11 +22,13 @@ public static class CompelConfigurationLoader
     /// <summary>
     ///     Writes a "COMPEL.json" populated with default values and descriptions.
     /// </summary>
-    public static void CreateDefault()
+    public static void CreateDefault() => CreateDefault(ResolvePath());
+
+    internal static void CreateDefault(string path)
     {
         string serialised = JsonSerializer.Serialize(new CompelConfigurationFile(), WriteContext.CompelConfigurationFile);
 
-        File.WriteAllText(ResolvePath(), serialised);
+        File.WriteAllText(path, serialised);
     }
 
     /// <summary>
@@ -35,9 +37,11 @@ public static class CompelConfigurationLoader
     /// <exception cref="InvalidOperationException">
     ///     Thrown with a message naming the problem when "COMPEL.json" is not valid JSON, or does not match the expected shape (for example a string where a number is expected), rather than letting a raw <see cref="JsonException"/> propagate.
     /// </exception>
-    public static CompelConfigurationFile Load()
+    public static CompelConfigurationFile Load() => Load(ResolvePath());
+
+    internal static CompelConfigurationFile Load(string path)
     {
-        string json = File.ReadAllText(ResolvePath());
+        string json = File.ReadAllText(path);
 
         CompelConfigurationFile file;
 

@@ -69,11 +69,19 @@ pwsh scripts/Publish-Native-AOT-Release.ps1
 
 Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-release.yml`, which builds all four platform targets (Windows and Linux, each × x64 and arm64) and attaches one zip per platform to a single GitHub Release.
 
+## Testing
+
+```
+dotnet test source/COMPEL.slnx
+```
+
+The `COMPEL.Tests` project (TUnit) covers the port arithmetic, manager arguments, configuration validation and loading, the ping and proxy-challenge wire formats, and the proxy relay over loopback. `.github/workflows/run-unit-tests.yml` runs the suite on Windows and Linux for every pull request to `main`.
+
 ## Solution layout
 
 ```
 scripts/    Native AOT release helper
-source/     COMPEL.slnx, Directory.Build.props/.targets, .editorconfig, and the COMPEL project
+source/     COMPEL.slnx, Directory.Build.props/.targets, .editorconfig, the COMPEL project, and the COMPEL.Tests project
 ```
 
 <br/>

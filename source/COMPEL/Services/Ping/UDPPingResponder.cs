@@ -111,7 +111,7 @@ public sealed class UDPPingResponder : BackgroundService
         }
     }
 
-    private static byte[] BuildResponseTemplate(string serverName, string? version)
+    internal static byte[] BuildResponseTemplate(string serverName, string? version)
     {
         byte[] serverNameBytes = Encoding.UTF8.GetBytes(serverName);
 

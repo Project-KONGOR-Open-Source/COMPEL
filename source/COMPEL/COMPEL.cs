@@ -100,6 +100,9 @@ builder.Logging.ClearProviders();
 
 string logFilePath = Path.Combine(AppContext.BaseDirectory, "COMPEL.log");
 
+// Write The Banner And This Session's Marker To The Log File Before The Logger Opens It, So Each Session Reads As A Distinct Block Headed By The Banner.
+Banner.WriteToLogFile(logFilePath);
+
 builder.Services.AddSerilog(loggerConfiguration =>
 {
     loggerConfiguration
