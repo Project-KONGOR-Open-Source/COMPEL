@@ -3,28 +3,42 @@ namespace COMPEL.Services.Proxy;
 /// <summary>
 ///     A bidirectional UDP relay for a single public port. Datagrams from a client are forwarded to the local server port; the server's replies are relayed back to the originating client.
 ///     A dedicated upstream socket per client preserves the server's per-client addressing, mirroring how the native proxy mapped each public port to its local server port.
+///     Heroes Of Newerth clients throttle their own traffic on the public (20000-29999) port range until the proxy authenticates them with a challenge, so the forwarder issues a challenge to each session on creation and renews it periodically.
 /// </summary>
 internal sealed class UDPForwarder : IDisposable
 {
     private const int DatagramBufferSize = 65535;
 
+    // The Challenge Packet's Leading Watermark Bytes, Which The Client Skips Before Reading The Control Payload: WATERMARK_LEN_TOTAL (20) Plus ENHANCED_WATERMARK_LEN_TOTAL (20).
+    private const int WatermarkPrefixLength = 40;
+
+    // Identifies A Proxy Control Packet (PACKET_PROXY, Bit 6) And The Challenge Sub-Type Within It.
+    private const byte ProxyPacketFlag = 0x40;
+    private const byte ChallengePacketType = 0x00;
+
+    // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge, And The Per-Challenge Packet Counters It Is Granted. The Counters Are Maximised Because The Proxy Does Not Perform The Native Build's Rate-Based Cheat Detection; Renewal Well Within The Window Keeps The Client Authenticated Continuously.
+    private const ushort ChallengeExpirySeconds = 60;
+    private const ushort ChallengeMaximumCounter = ushort.MaxValue;
+    private const ushort ChallengeMaximumGameCommandCounter = ushort.MaxValue;
+
     private readonly IPEndPoint serverEndPoint;
-    private readonly Func<IPAddress, bool> isBanned;
     private readonly ILogger logger;
     private readonly Socket frontSocket;
     private readonly ConcurrentDictionary<IPEndPoint, ClientSession> sessions = new ();
     private readonly Lock sessionsLock = new ();
 
+    // The Client Accepts A Renewed Challenge Only When Its Value Differs From The Previous One And Its Timestamp Is Strictly Greater, So A Single Monotonically-Increasing Sequence Drives Both Fields.
+    private long challengeSequence;
+
     public int PublicPort { get; }
 
     public int LocalPort { get; }
 
-    public UDPForwarder(int publicPort, int localPort, Func<IPAddress, bool> isBanned, ILogger logger)
+    public UDPForwarder(int publicPort, int localPort, ILogger logger)
     {
         PublicPort = publicPort;
         LocalPort = localPort;
         serverEndPoint = new IPEndPoint(IPAddress.Loopback, localPort);
-        this.isBanned = isBanned;
         this.logger = logger;
 
         frontSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -59,14 +73,15 @@ internal sealed class UDPForwarder : IDisposable
 
             IPEndPoint client = (IPEndPoint)result.RemoteEndPoint;
 
-            // Application-Layer Ban Enforcement: Banned Sources Are Dropped Regardless Of Whether A Firewall Rule Also Exists.
-            if (isBanned(client.Address))
-                continue;
-
             ClientSession session;
+            bool created;
 
-            try { session = GetOrCreateSession(client, stoppingToken); }
+            try { session = GetOrCreateSession(client, stoppingToken, out created); }
             catch (Exception exception) { logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client); continue; }
+
+            // Authenticate A New Client Immediately So It Does Not Exhaust Its Unauthenticated Packet Budget Waiting For The First Periodic Renewal.
+            if (created)
+                SendChallenge(client);
 
             session.Touch();
 
@@ -76,26 +91,81 @@ internal sealed class UDPForwarder : IDisposable
         }
     }
 
-    private ClientSession GetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken)
+    /// <summary>
+    ///     Sends a fresh challenge to every active session, renewing their authentication before the client's window lapses.
+    /// </summary>
+    public void ChallengeActiveSessions()
+    {
+        foreach (IPEndPoint client in sessions.Keys)
+            SendChallenge(client);
+    }
+
+    private void SendChallenge(IPEndPoint client)
+    {
+        uint sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+
+        // The Value Must Be Non-Zero, As Zero Marks An Unauthenticated Session On The Client; Skip It On The Rare Wrap-Around.
+        if (sequence is 0)
+            sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+
+        byte[] packet = BuildChallengePacket(sequence, sequence);
+
+        // The Challenge Must Originate From This (Front) Socket So Its Source Address And Port Match The Endpoint The Client Sends Its Game Traffic To, Which Is How The Client Keys The Authenticated Session.
+        try { frontSocket.SendTo(packet, SocketFlags.None, client); }
+        catch (Exception exception) { logger.LogDebug(exception, "Failed To Send Challenge To {Client}", client); }
+    }
+
+    private static byte[] BuildChallengePacket(uint serverCreationTimestamp, uint value)
+    {
+        byte[] packet = new byte[WatermarkPrefixLength + 18];
+
+        // The First Forty Bytes Are The Watermark Prefix The Client Skips Unread And Are Left Zeroed.
+        Span<byte> payload = packet.AsSpan(WatermarkPrefixLength);
+
+        payload[0] = 0xFF;
+        payload[1] = 0xFF;
+        payload[2] = ProxyPacketFlag;
+        payload[3] = ChallengePacketType;
+
+        BinaryPrimitives.WriteUInt32LittleEndian(payload[4..], serverCreationTimestamp);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[8..], ChallengeExpirySeconds);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[10..], ChallengeMaximumCounter);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[12..], ChallengeMaximumGameCommandCounter);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload[14..], value);
+
+        return packet;
+    }
+
+    private ClientSession GetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out bool created)
     {
         if (sessions.TryGetValue(client, out ClientSession? existing))
+        {
+            created = false;
+
             return existing;
+        }
 
         lock (sessionsLock)
         {
             if (sessions.TryGetValue(client, out existing))
+            {
+                created = false;
+
                 return existing;
+            }
 
             Socket upstreamSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             DisableConnectionResetReporting(upstreamSocket);
             upstreamSocket.Connect(serverEndPoint);
 
-            ClientSession created = new (upstreamSocket, stoppingToken);
-            sessions[client] = created;
+            ClientSession session = new (upstreamSocket, stoppingToken);
+            sessions[client] = session;
 
-            _ = PumpServerToClient(client, created);
+            _ = PumpServerToClient(client, session);
 
-            return created;
+            created = true;
+
+            return session;
         }
     }
 
@@ -122,11 +192,6 @@ internal sealed class UDPForwarder : IDisposable
                 }
 
                 if (received is 0)
-                    continue;
-
-                // Application-Layer Ban Enforcement On The Reply Path: A Client Banned After Its Session Was Established Must Not Keep Receiving Relayed Server Traffic.
-                // The Check Precedes "Touch" So A Banned Client's Session Is Left To Age Out And Be Evicted Rather Than Being Kept Alive Indefinitely By The Server's Continued Replies.
-                if (isBanned(client.Address))
                     continue;
 
                 session.Touch();

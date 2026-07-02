@@ -84,8 +84,6 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         if (stoppingToken.IsCancellationRequested)
             return;
 
-        await PingMasterServer(stoppingToken).ConfigureAwait(false);
-
         LogPortAllocation();
 
         // When The Proxy Is Enabled The Manager Advertises Public Ports (Local + 10000) That Only Work If The Proxy Bound Them. If No Forwarder Could Bind, Launching The Manager Would Register Unreachable Public Ports With The Master Server, So The Launch Is Refused Instead.
@@ -386,29 +384,6 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         }
 
         reconcileSignal.Release();
-    }
-
-    private async Task PingMasterServer(CancellationToken cancellationToken)
-    {
-        string host = addressResolver.MasterServerHost;
-
-        try
-        {
-            using System.Net.NetworkInformation.Ping ping = new ();
-
-            PingReply reply = await ping.SendPingAsync(host, TimeSpan.FromSeconds(5), cancellationToken: cancellationToken).ConfigureAwait(false);
-
-            if (reply.Status is IPStatus.Success)
-                logger.LogInformation("Master Server {Host} Is Reachable ({RoundtripTime} ms)", host, reply.RoundtripTime);
-
-            else
-                logger.LogWarning("Master Server {Host} Ping Returned {Status}; Proceeding Anyway", host, reply.Status);
-        }
-
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Master Server {Host} Could Not Be Pinged; Proceeding Anyway", host);
-        }
     }
 
     private void LogPortAllocation()

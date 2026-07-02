@@ -38,6 +38,24 @@ if (configuration.ControlPlanePort.Value is < 1 or > 65535)
     return;
 }
 
+// COMPEL Requires Elevated Privileges On Both Platforms: The Manager Assigns Processor Affinity And Priority To Its Child Servers, Which Is Not Possible Otherwise, So There Is No Point Starting Without Them.
+if (Environment.IsPrivilegedProcess is false)
+{
+    Console.WriteLine("COMPEL Requires Elevated Privileges To Run: The Match Server Manager Assigns Processor Affinity And Priority To Its Servers.");
+    Console.WriteLine(OperatingSystem.IsWindows() ? "Start COMPEL As An Administrator." : @"Start COMPEL As Root (For Example Via ""sudo"").");
+
+    return;
+}
+
+// The Master Server Must Be Reachable Before Launching: The Servers Cannot Register Or Authenticate Without It, So An Unreachable Master Server Is A Hard Startup Failure. A Localhost Gateway Uses A Loopback Master Server And Is Not Pinged.
+if (await MasterServerIsReachable(configuration.Gateway.Value) is false)
+{
+    Console.WriteLine(@"The Master Server ""api.kongor.net"" Is Not Reachable; COMPEL Will Not Start.");
+    Console.WriteLine("Check The Host's Network Connection, Then Start COMPEL Again.");
+
+    return;
+}
+
 // Refuse To Start If Another COMPEL Instance Is Already Running Against This Installation.
 string lockFilePath = Path.Combine(AppContext.BaseDirectory, "COMPEL.lock");
 
@@ -90,23 +108,9 @@ builder.Services.AddSerilog(loggerConfiguration =>
         .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
         .Enrich.FromLogContext()
         .WriteTo.Console()
-        // Roll The File Daily And On A Size Cap, Retaining A Bounded Number Of Files, So Logging Does Not Silently Stop At The Default Single-File Size Limit On A Long-Running Host.
-        .WriteTo.File
-        (
-            logFilePath,
-            rollingInterval: RollingInterval.Day,
-            rollOnFileSizeLimit: true,
-            fileSizeLimitBytes: 100L * 1024 * 1024,
-            retainedFileCountLimit: 14,
-            flushToDiskInterval: TimeSpan.FromSeconds(1)
-        );
+        // A Single "COMPEL.log" File, Not Rolled Into Dated Files: COMPEL Itself Does Little Active Work (The Manager And Servers Do The Heavy Lifting And Log Separately), So The File Grows Slowly. "fileSizeLimitBytes: null" Removes The Default Size Cap So Logging Never Silently Stops.
+        .WriteTo.File(logFilePath, fileSizeLimitBytes: null, flushToDiskInterval: TimeSpan.FromSeconds(1));
 });
-
-// Firewall Controller: The Windows Implementation When Elevated, Otherwise A No-Op (Application-Layer Bans Still Apply).
-if (OperatingSystem.IsWindows() && Environment.IsPrivilegedProcess)
-    builder.Services.AddSingleton<IFirewallController, WindowsFirewallController>();
-else
-    builder.Services.AddSingleton<IFirewallController, NoOperationFirewallController>();
 
 // Domain Services.
 // The Port Plan Is A Pure Function Of The Options, So It Is Registered Once As The Single Source Of Truth Shared By The Supervisor, The Proxy, And The Ping Responder.
@@ -144,9 +148,6 @@ try
 
     application.UseSerilogRequestLogging();
 
-    if (Environment.IsPrivilegedProcess is false)
-        application.Logger.LogWarning("COMPEL Is Not Running With Elevated Privileges; Processor Affinity And Firewall Integration Will Be Unavailable");
-
     application.MapHealthChecks("/health");
     application.MapHealthChecks("/alive", new HealthCheckOptions { Predicate = registration => registration.Tags.Contains("live") });
 
@@ -178,4 +179,25 @@ catch (OptionsValidationException exception)
     Console.WriteLine($@"Fix ""{CompelConfigurationLoader.ResolvePath()}"" And Start COMPEL Again.");
 
     return;
+}
+
+// Pings The Master Server (Unless The Gateway Is Loopback, Whose Master Server Is Local And Assumed Reachable). A Filtered ICMP Response Is Treated As Unreachable, As In The Legacy Startup Check.
+static async Task<bool> MasterServerIsReachable(string gateway)
+{
+    if (gateway.Equals("localhost", StringComparison.OrdinalIgnoreCase) || gateway.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+        return true;
+
+    try
+    {
+        using Ping ping = new ();
+
+        PingReply reply = await ping.SendPingAsync("api.kongor.net", TimeSpan.FromSeconds(5));
+
+        return reply.Status is IPStatus.Success;
+    }
+
+    catch
+    {
+        return false;
+    }
 }

@@ -13,7 +13,7 @@
 COMPEL is a cross-platform, Native-AOT ASP.NET Core application that launches and supervises Heroes Of Newerth match servers on a host. It:
 
 - Synchronises the match server distribution from the CDN (incremental, hash-verified, atomic) into its own directory, then launches and supervises the Heroes Of Newerth manager process, restarting it if it exits unexpectedly.
-- Runs a managed, cross-platform UDP proxy (anti-cheat / anti-DDoS port remapping) when enabled, forwarding the public game and voice ports to the local server ports. Disabled by default.
+- Runs a managed, cross-platform UDP proxy when enabled, forwarding the public game and voice ports to the local server ports and authenticating clients with the challenge protocol they require on that port range. Enabled by default.
 - Answers the master server's UDP latency pings.
 - Exposes an HTTP control plane so it can be pinged for latency, queried by NEXUS, and managed remotely by the host operator.
 
@@ -30,7 +30,7 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 | `Gateway` | `kongor.net`, `localhost` (local NEXUS), `PUBLIC` (auto-detect public IP), an IP address, or a host name. |
 | `Location` | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`. |
 | `ServerNamePrefix` | Base server name; the instance index is appended. |
-| `UseProxy` | Whether to run the anti-cheat / anti-DDoS proxy (default `false`). |
+| `UseProxy` | Whether to run the proxy (public port remapping + client challenge authentication; default `true`). |
 | `PortRangeOffset` | Offset into the game/voice port windows; `base + offset + instances` must stay within the 100-port window. |
 | `RuntimeArtefactsPath` | `DEFAULT` (the host account's profile) or a fully qualified path. Windows only. |
 | `CDNSynchronisation` | Whether to synchronise the distribution from the CDN on startup; set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works). |
@@ -45,7 +45,7 @@ Infrastructure that hosts do not tune — the CDN host and per-OS variants, the 
 dotnet run --project source/COMPEL
 ```
 
-On first run COMPEL writes a default `COMPEL.json` next to the executable and exits; set at least `UserName` and `Password` (and `AuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local NEXUS), then run again. Logs are written to the console and to rolling `COMPEL` log files beside the executable.
+On first run COMPEL writes a default `COMPEL.json` next to the executable and exits; set at least `UserName` and `Password` (and `AuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local NEXUS), then run again. Logs are written to the console and to a single `COMPEL.log` beside the executable.
 
 ## Control plane
 

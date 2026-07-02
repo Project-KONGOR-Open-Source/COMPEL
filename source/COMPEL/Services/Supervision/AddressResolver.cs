@@ -73,11 +73,6 @@ public sealed class AddressResolver
     }
 
     /// <summary>
-    ///     The master server host used for the reachability ping.
-    /// </summary>
-    public string MasterServerHost => GatewayIsLocalhost ? LocalMasterServerAddress : PublicMasterServerAddress;
-
-    /// <summary>
     ///     The master server host and port passed to the manager via the "-masterserver" argument. The public gateway takes no explicit port; the local gateway uses the local NEXUS port.
     /// </summary>
     public string MasterServerHostAndPort => GatewayIsLocalhost ? $"{LocalMasterServerAddress}:{LocalMasterServerPort}" : PublicMasterServerAddress;

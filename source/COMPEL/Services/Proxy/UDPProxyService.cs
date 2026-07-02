@@ -1,26 +1,22 @@
 namespace COMPEL.Services.Proxy;
 
 /// <summary>
-///     The managed, cross-platform anti-cheat / anti-DDoS proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
-///     It enforces a ban list by dropping banned datagrams and, where firewall integration is available, blocking the source; the ban list is cleared periodically so blocks expire, faithfully reproducing the legacy proxy manager's twelve-hour firewall cleaner.
-///     The original proxy's cheater-detection heuristics lived in a closed binary and are not reproduced; the transport, port remapping, ban enforcement, and firewall integration are. Detection is a deliberate future extension via <see cref="BanAddress"/>.
+///     The managed, cross-platform proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
+///     Heroes Of Newerth clients throttle their own traffic on the public port range until the proxy authenticates them, so each forwarder issues a challenge to every session on creation and this service renews those challenges periodically.
 /// </summary>
+// TODO: This proxy performs the transport, port remapping, and client authentication only. It does NOT detect cheaters or ban anyone: the native proxy's detection heuristics lived in a closed binary and are not reproduced, and the previous firewall/ban-list mechanism was removed as ineffective. A future redesign is expected to introduce a different enforcement approach (likely not a static ban list), at which point a hook to drop or block traffic per source can be reintroduced.
 public sealed class UDPProxyService : BackgroundService
 {
     private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan IdleSweepInterval = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan FirewallCleanupInterval = TimeSpan.FromHours(12);
+
+    // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals.
+    private static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
 
     private readonly MatchServerManagerOptions options;
-    private readonly IFirewallController firewall;
     private readonly PortPlan ports;
     private readonly ILogger<UDPProxyService> logger;
 
-    private readonly ConcurrentDictionary<IPAddress, byte> bannedAddresses = new ();
     private readonly List<UDPForwarder> forwarders = new ();
-
-    // Guards "bannedAddresses" Together With The Firewall Controller So The Periodic Clear In "RunMaintenanceLoop" And A Concurrent "BanAddress" Call Can Never Leave The Two Stores Disagreeing With Each Other.
-    private readonly Lock banLock = new ();
 
     // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports.
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
@@ -28,10 +24,9 @@ public sealed class UDPProxyService : BackgroundService
     private volatile bool running;
     private int failedForwarderCount;
 
-    public UDPProxyService(IOptions<MatchServerManagerOptions> options, IFirewallController firewall, PortPlan ports, ILogger<UDPProxyService> logger)
+    public UDPProxyService(IOptions<MatchServerManagerOptions> options, PortPlan ports, ILogger<UDPProxyService> logger)
     {
         this.options = options.Value;
-        this.firewall = firewall;
         this.ports = ports;
         this.logger = logger;
     }
@@ -47,22 +42,6 @@ public sealed class UDPProxyService : BackgroundService
     ///     The number of game/voice ports that failed to bind on startup. A non-zero value means the proxy is running in a degraded state: some instances have no working proxy at all even though <see cref="IsRunning"/> is <see langword="true"/>.
     /// </summary>
     public int FailedForwarderCount => Volatile.Read(ref failedForwarderCount);
-
-    /// <summary>
-    ///     Bans a source address: subsequent datagrams from it are dropped, and a firewall rule blocks it where firewall integration is available.
-    /// </summary>
-    public void BanAddress(IPAddress address)
-    {
-        lock (banLock)
-        {
-            if (bannedAddresses.TryAdd(address, 0) is false)
-                return;
-
-            firewall.BlockAddress(address);
-        }
-
-        logger.LogWarning("Banned Source Address {Address}", address);
-    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -128,7 +107,7 @@ public sealed class UDPProxyService : BackgroundService
     {
         try
         {
-            forwarders.Add(new UDPForwarder(publicPort, localPort, IsBanned, logger));
+            forwarders.Add(new UDPForwarder(publicPort, localPort, logger));
         }
 
         catch (Exception exception)
@@ -139,34 +118,18 @@ public sealed class UDPProxyService : BackgroundService
         }
     }
 
-    private bool IsBanned(IPAddress address) => bannedAddresses.ContainsKey(address);
-
     private async Task RunMaintenanceLoop(CancellationToken stoppingToken)
     {
-        // Clear Any Stale Firewall Block Rule Left Over From A Previous Run, As The Legacy Proxy Manager Did On Startup.
-        lock (banLock) { firewall.ClearBlockedAddresses(); }
-
-        long lastFirewallCleanupTicks = Environment.TickCount64;
-
         while (stoppingToken.IsCancellationRequested is false)
         {
-            try { await Task.Delay(IdleSweepInterval, stoppingToken).ConfigureAwait(false); }
+            try { await Task.Delay(ChallengeRenewalInterval, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
 
             foreach (UDPForwarder forwarder in forwarders)
-                forwarder.EvictIdleSessions(IdleSessionTimeout);
-
-            if (Environment.TickCount64 - lastFirewallCleanupTicks < FirewallCleanupInterval.TotalMilliseconds)
-                continue;
-
-            // Bans Expire Periodically So A Transient Block Does Not Persist Indefinitely. Locked Together With "BanAddress" So The Firewall And The In-Memory Ban List Never Disagree.
-            lock (banLock)
             {
-                firewall.ClearBlockedAddresses();
-                bannedAddresses.Clear();
+                forwarder.ChallengeActiveSessions();
+                forwarder.EvictIdleSessions(IdleSessionTimeout);
             }
-
-            lastFirewallCleanupTicks = Environment.TickCount64;
         }
     }
 }

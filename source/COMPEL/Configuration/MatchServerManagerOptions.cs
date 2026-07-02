@@ -37,10 +37,9 @@ public sealed class MatchServerManagerOptions
     public string ServerNamePrefix { get; set; } = "KONGOR ARENA";
 
     /// <summary>
-    ///     Whether to run the anti-cheat and anti-DDoS proxy in front of the game servers. The proxy exposes public ports offset by <see cref="PortPlan.ProxyPublicOffset"/> and forwards them to the local server ports.
-    ///     Defaults to <see langword="false"/>: with the proxy disabled the servers' local ports are public, which is the fully supported path. The proxy transport is in place, but the client challenge protocol it requires on the public port range is not yet implemented, so enabling it is opt-in until that lands.
+    ///     Whether to run the proxy in front of the game servers. The proxy exposes public ports offset by <see cref="PortPlan.ProxyPublicOffset"/>, forwards them to the local server ports, and authenticates clients with the challenge protocol they require on that port range.
     /// </summary>
-    public bool UseProxy { get; set; }
+    public bool UseProxy { get; set; } = true;
 
     /// <summary>
     ///     The offset from the start of the valid game and voice port ranges at which the ports used at runtime begin.

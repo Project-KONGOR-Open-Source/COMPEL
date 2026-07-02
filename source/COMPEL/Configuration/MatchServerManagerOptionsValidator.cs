@@ -20,11 +20,17 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         if (string.IsNullOrWhiteSpace(options.UserName))
             failures.Add(@"""UserName"" Must Be Provided");
 
+        else if (options.UserName.Equals("USERNAME", StringComparison.OrdinalIgnoreCase))
+            failures.Add(@"""UserName"" Is Still The Default Placeholder; Set It To A Registered Project KONGOR User");
+
         else if (ContainsUnsafeManagerArgumentCharacter(options.UserName))
             failures.Add(@"""UserName"" Must Not Contain A Double Quote, Semicolon, Or Control Character");
 
         if (string.IsNullOrWhiteSpace(options.Password))
             failures.Add(@"""Password"" Must Be Provided");
+
+        else if (options.Password.Equals("PASSWORD", StringComparison.OrdinalIgnoreCase))
+            failures.Add(@"""Password"" Is Still The Default Placeholder; Set It To The User's Password");
 
         else if (ContainsUnsafeManagerArgumentCharacter(options.Password))
             failures.Add(@"""Password"" Must Not Contain A Double Quote, Semicolon, Or Control Character");

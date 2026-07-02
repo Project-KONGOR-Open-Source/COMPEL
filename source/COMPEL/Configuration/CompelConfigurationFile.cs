@@ -58,8 +58,8 @@ public sealed class ServerNamePrefixSetting
 
 public sealed class UseProxySetting
 {
-    public bool Value { get; set; }
-    public string Description => "Whether to run COMPEL's built-in anti-cheat and anti-DDoS proxy in front of the game servers. When enabled, clients connect to public ports offset 10000 above the local server ports (e.g. 21235 instead of 11235) and the proxy forwards them to the servers. Defaults to 'false': with the proxy disabled the local server ports are public, which is the fully supported path. The proxy transport is implemented, but the client challenge protocol required on the public port range is not yet, so only enable it once that has been added.";
+    public bool Value { get; set; } = true;
+    public string Description => "Whether to run COMPEL's built-in proxy in front of the game servers. When enabled, clients connect to public ports offset 10000 above the local server ports (e.g. 21235 instead of 11235); the proxy forwards them to the servers and authenticates each client with the challenge protocol required on that port range. Set to 'false' to make the local server ports public directly, without the proxy.";
 }
 
 public sealed class PortRangeOffsetSetting
@@ -83,7 +83,7 @@ public sealed class CDNSynchronisationSetting
 public sealed class AuthenticationTokenSetting
 {
     public string Value { get; set; } = string.Empty;
-    public string Description => "The bearer token that NEXUS and host operators must present to use the remote management endpoints (status, synchronisation, and instance lifecycle). Leave empty to disable remote management.";
+    public string Description => "The bearer token that NEXUS and host operators must present to use the remote management endpoints (status, synchronisation, and instance lifecycle). Leave empty to disable remote management. The control plane serves plain HTTP, so expose it only on a trusted network or behind a TLS-terminating reverse proxy; otherwise the token travels in cleartext.";
 }
 
 public sealed class ControlPlanePortSetting
