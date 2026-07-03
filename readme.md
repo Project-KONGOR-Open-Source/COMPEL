@@ -21,7 +21,7 @@ It ships as a single self-contained binary plus a self-describing `COMPEL.json`.
 
 ## Configuration
 
-All host-facing configuration lives in a single `COMPEL.json` beside the executable, in the self-documenting `{ "Value": …, "Description": … }` format. On first run it is generated with defaults and descriptions, and COMPEL stops so it can be edited. Every value is validated at startup, and all startup problems are reported together.
+All host-facing configuration lives in a single `COMPEL.json` beside the executable, in the self-documenting `{ "Value": …, "Description": … }` format. The release archives ship with a default one already in place; when it is missing (for example when running from source), COMPEL generates it on first run and stops so it can be edited. Every value is validated at startup, and all startup problems are reported together.
 
 | Key                     | Purpose                                                                                                                                                                      |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -43,7 +43,7 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 dotnet run --project source/COMPEL
 ```
 
-On first run COMPEL writes a default `COMPEL.json` next to the executable and exits. Set at least `UserName` and `Password` (and `AuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run again. Logs are written to the console and to a single `COMPEL.log` beside the executable.
+The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password` (and `AuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run COMPEL. Logs are written to the console and to a single `COMPEL.log` beside the executable.
 
 ## Control Plane
 
@@ -65,7 +65,7 @@ Requires the .NET 10 SDK. A native, self-contained release is produced per platf
 pwsh scripts/Publish-Native-AOT-Release.ps1
 ```
 
-Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-release.yml`, which builds all four platform targets (Windows and Linux, each × x64 and arm64) and attaches one zip per platform to a single GitHub Release.
+Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-releases.yml`, which builds all four platform targets (Windows and Linux, each × x64 and arm64) and attaches one zip per platform, each containing the binary and a default `COMPEL.json`, to a single GitHub Release.
 
 ## Testing
 

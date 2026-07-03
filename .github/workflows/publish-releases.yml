@@ -70,6 +70,19 @@ jobs:
         $Version = $env:GITHUB_REF_NAME -replace '^v', ''
         dotnet publish source/COMPEL -p:PublishProfile=${{ matrix.profile }} -p:Version=$Version
 
+    # running the freshly published binary once triggers its first-run path: it writes a default `COMPEL.json` beside itself and exits without starting any services
+    # shipping that generated file means the default configuration in the zip is exactly what the binary itself would create, so it can never drift from the defaults in code
+    # executing the binary here is possible for the same reason the matrix pins each RID to a matching runner: the Native AOT output always targets the OS and architecture of the machine that built it
+    # the first-run path exits before the logger and the single-instance lock are ever created, so `COMPEL.json` is the only file it leaves behind
+    # the trailing checks fail the job loudly if that ever changes: a missing `COMPEL.json`, or a stray `COMPEL.log`/`COMPEL.lock` that must not ship in the zip
+    - name: "Generate Default Configuration"
+      shell: "pwsh"
+      run: |
+        Set-Location "source/COMPEL/bin/Publish/${{ matrix.publish_dir }}"
+        if ($IsWindows) { .\COMPEL.exe } else { ./COMPEL }
+        if (-not (Test-Path "COMPEL.json")) { throw 'COMPEL did not generate a default COMPEL.json' }
+        if ((Test-Path "COMPEL.log") -or (Test-Path "COMPEL.lock")) { throw 'COMPEL unexpectedly created runtime artefacts beyond COMPEL.json' }
+
     # the `Compress-Archive` PowerShell cmdlet is used on Windows because `zip` is not reliably on PATH in pwsh on GitHub's Windows runner images, and Windows has no exec-bit concept so dropping UNIX permission metadata is harmless
     # the external `zip` command is used on Linux because Compress-Archive would drop the exec bits there, causing the unzipped binary to fail to launch without a manual chmod
     # debug artefacts are removed before zipping to keep release zips small: `.pdb` files on Windows and `.dbg` files on Linux; users who need symbols can build from source
