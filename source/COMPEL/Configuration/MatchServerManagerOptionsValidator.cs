@@ -43,11 +43,11 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         else if (options.Instances > processorCount)
             failures.Add($@"""Instances"" ({options.Instances}) Must Not Exceed The Number Of Logical Processors ({processorCount})");
 
-        if (options.IdleTarget < 0)
-            failures.Add(@"""IdleTarget"" Must Not Be Negative");
+        if (options.WarmInstancesTarget < 0)
+            failures.Add(@"""WarmInstancesTarget"" Must Not Be Negative");
 
-        else if (options.IdleTarget > options.Instances)
-            failures.Add($@"""IdleTarget"" ({options.IdleTarget}) Must Not Exceed ""Instances"" ({options.Instances})");
+        else if (options.WarmInstancesTarget > options.Instances)
+            failures.Add($@"""WarmInstancesTarget"" ({options.WarmInstancesTarget}) Must Not Exceed ""Instances"" ({options.Instances})");
 
         if (string.IsNullOrWhiteSpace(options.Gateway))
             failures.Add(@"""Gateway"" Must Be Provided");

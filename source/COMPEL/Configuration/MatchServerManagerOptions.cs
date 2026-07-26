@@ -24,7 +24,7 @@ public sealed class MatchServerManagerOptions
     /// <summary>
     ///     The number of server instances the manager keeps idle (warm and ready to host) at any time; the remaining instances are put to sleep and woken on demand. Must be between zero and <see cref="Instances"/>.
     /// </summary>
-    public int IdleTarget { get; set; } = 1;
+    public int WarmInstancesTarget { get; set; } = 1;
 
     /// <summary>
     ///     The entry point for game servers and the server manager: "localhost" for local development, "PUBLIC" to auto-detect the public IP address, a LAN or public IP address, or a host name to resolve.

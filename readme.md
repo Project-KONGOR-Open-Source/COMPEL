@@ -27,7 +27,7 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `UserName` / `Password` | The Project KONGOR host account credentials.                                                                                                                                 |
 | `Instances`             | Number of match server instances (1 … logical processor count).                                                                                                              |
-| `IdleTarget`            | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                   |
+| `WarmInstancesTarget`   | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                   |
 | `Gateway`               | `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                                                                  |
 | `Location`              | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`.                                                                                                       |
 | `ServerNamePrefix`      | The base match server name. The instance index is appended.                                                                                                                  |

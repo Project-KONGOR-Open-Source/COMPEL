@@ -10,7 +10,7 @@ public sealed class ManagerArgumentsTests
         UserName             = "KONGOR",
         Password             = "secret",
         Instances            = 2,
-        IdleTarget           = 2,
+        WarmInstancesTarget  = 2,
         Gateway              = "kongor.net",
         Location             = "EU",
         ServerNamePrefix     = "KONGOR ARENA",
