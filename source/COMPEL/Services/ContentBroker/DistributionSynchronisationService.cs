@@ -9,9 +9,6 @@ public sealed class DistributionSynchronisationService : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
 
-    // COMPEL Installs The Distribution Alongside Its Own Executable, So Its Own Files (The Binary, "COMPEL.json", "COMPEL.log", "COMPEL.lock", And Any Build Artefacts) Are Protected From Being Overwritten Or Deleted By The Mirror, Regardless Of What The Manifest Declares.
-    private static readonly string[] OwnFileProtectionPatterns = [ "COMPEL*" ];
-
     private readonly CDNOptions options;
     private readonly ILogger<DistributionSynchronisationService> logger;
     private readonly SemaphoreSlim gate = new (1, 1);
@@ -46,7 +43,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
     }
 
     // The Distribution Installs Alongside The COMPEL Executable By Default (An Empty Configured Directory), So It Sits Beside The Binary Rather Than In A Peer Folder. A Relative Path Is Resolved Against The Executable's Directory, And A Fully Qualified Path Is Honoured As-Is.
-    private static string ResolveInstallationDirectory(string configured)
+    public static string ResolveInstallationDirectory(string configured)
     {
         if (string.IsNullOrWhiteSpace(configured))
             return AppContext.BaseDirectory;
@@ -74,6 +71,21 @@ public sealed class DistributionSynchronisationService : BackgroundService
             logger.LogInformation("Initial CDN Synchronisation Is Disabled; Proceeding With The Existing Local Distribution");
 
             SynchronisationState = "Disabled";
+
+            ready.TrySetResult();
+
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+
+            return;
+        }
+
+        // Mirroring The Launcher's Location Guard, A Development Environment Is Never Synchronised: The Mirror's Deletion Pass Would Otherwise Remove Development Artefacts That Are Not Part Of The Distribution.
+        if (LocationGuard.AssessLocationSafety(InstallationDirectory).Verdict is not LocationSafetyVerdict.Safe)
+        {
+            logger.LogInformation("CDN Synchronisation Is Skipped (Development Environment); Proceeding With The Existing Local Distribution");
+
+            SynchronisationState = "Skipped (Development Environment)";
 
             ready.TrySetResult();
 
@@ -132,6 +144,14 @@ public sealed class DistributionSynchronisationService : BackgroundService
     /// </summary>
     public async Task<SynchronisationSummary> SynchroniseNow(CancellationToken cancellationToken)
     {
+        // Mirroring The Startup Path, A Location That Is Not Safe To Mirror Into (A Development Environment) Is Never Synchronised, Including On Demand Via The Control Plane.
+        if (LocationGuard.AssessLocationSafety(InstallationDirectory).Verdict is not LocationSafetyVerdict.Safe)
+        {
+            logger.LogInformation("Synchronisation Skipped: The Installation Directory Is Not Safe To Mirror Into");
+
+            return new SynchronisationSummary(0, 0, 0, 0, 0, []);
+        }
+
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         synchronising = true;
@@ -148,7 +168,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
             Progress<SynchronisationEvent> progress = new (LogSynchronisationEvent);
 
-            SynchronisationSummary summary = await ContentBroker.Synchronise(manifest, Variant, InstallationDirectory, options.Host, options.ParallelTransfers, OwnFileProtectionPatterns, progress, cancellationToken).ConfigureAwait(false);
+            SynchronisationSummary summary = await ContentBroker.Synchronise(manifest, Variant, InstallationDirectory, options.Host, options.ParallelTransfers, progress, cancellationToken).ConfigureAwait(false);
 
             SynchronisationState = summary.FilesFailed is 0 ? "Up To Date" : $"Completed With {summary.FilesFailed} Failure(s)";
 
@@ -194,6 +214,10 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
             case SynchronisationEventKind.Deleted:
                 logger.LogDebug("Deleted {Path}", synchronisationEvent.Detail);
+                break;
+
+            case SynchronisationEventKind.Skipped:
+                logger.LogDebug("Skipped {Path}", synchronisationEvent.Detail);
                 break;
 
             case SynchronisationEventKind.DownloadFailed:

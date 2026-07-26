@@ -5,7 +5,7 @@ namespace COMPEL.Configuration;
 /// </summary>
 public static class CompelConfigurationLoader
 {
-    private const string FileName = "COMPEL.json";
+    private const string FileName = DeploymentManifest.ConfigurationFileName;
 
     // A Dedicated Context Whose Options Indent The Output And Avoid Escaping Apostrophes And Slashes In The Descriptions, So The Generated File Reads Cleanly.
     private static readonly CompelConfigurationJSONContext WriteContext = new (new JsonSerializerOptions

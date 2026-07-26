@@ -4,7 +4,7 @@ namespace COMPEL.Services.ContentBroker;
 ///     Synchronises a local installation directory with a content bucket described by a remote manifest.
 ///     The local tree becomes an exact mirror of the manifest's file list.
 ///     Files matching <see cref="Manifest.ExcludeFromSource"/> are remote-side paths that must not be downloaded (e.g. the manifest itself).
-///     Files matching <see cref="Manifest.ExcludeFromTarget"/> are local-side paths that must not be changed in any way; they are neither overwritten by downloads nor removed by deletions.
+///     Files matching <see cref="Manifest.ExcludeFromTarget"/> are local-side paths that must not be changed in any way (e.g. the orchestrator's own files). They are neither overwritten by downloads nor removed by deletions.
 /// </summary>
 public static class ContentBroker
 {
@@ -36,6 +36,7 @@ public static class ContentBroker
     ///     Mirrors the manifest's file list into <paramref name="targetDirectory"/>: downloads missing or mismatched files, and removes local files that are not in the manifest.
     ///     For each manifest entry the download pass asks two questions in order: first, may the file be fetched from the bucket (a remote-side check against <see cref="Manifest.ExcludeFromSource"/>); second, would writing it change a local path that must not be changed (a local-side check against <see cref="Manifest.ExcludeFromTarget"/>).
     ///     The deletion pass asks the local-side question alone, against <see cref="Manifest.ExcludeFromTarget"/>.
+    ///     Leftover partial files from an interrupted run are removed up-front, before any downloads begin.
     ///     Downloads run in parallel and are written atomically via a <c>.partial</c> temporary file that is renamed on success.
     /// </summary>
     public static async Task<SynchronisationSummary> Synchronise
@@ -45,7 +46,6 @@ public static class ContentBroker
         string targetDirectory,
         string baseURL = DefaultBaseURL,
         int parallelTransfers = DefaultParallelTransfers,
-        IReadOnlyList<string>? protectedTargetPatterns = null,
         IProgress<SynchronisationEvent>? progress = null,
         CancellationToken cancellationToken = default
     )
@@ -60,9 +60,7 @@ public static class ContentBroker
         Directory.CreateDirectory(targetDirectory);
 
         Matcher sourceExclusions = BuildMatcher(manifest.ExcludeFromSource);
-
-        // The Caller-Supplied Protected Patterns Are Merged Into The Target Exclusions So The Synchronisation Never Overwrites Or Deletes The Consuming Application's Own Files When The Distribution Is Installed Into The Same Directory As The Executable.
-        Matcher targetExclusions = BuildMatcher(manifest.ExcludeFromTarget, protectedTargetPatterns);
+        Matcher targetExclusions = BuildMatcher(manifest.ExcludeFromTarget);
 
         // First Pass: Decide Which Files Listed In The Manifest Need To Be Downloaded
 
@@ -100,17 +98,7 @@ public static class ContentBroker
 
             string localPath = Path.Combine(targetDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
 
-            // Reject Any Manifest Entry Whose Resolved Path Escapes The Target Directory (Directory Traversal), So A Malformed Or Malicious Manifest Cannot Write Outside The Installation Tree.
-            if (IsWithinDirectory(targetDirectory, localPath) is false)
-            {
-                filesToSkip++;
-
-                progress?.Report(new SynchronisationEvent(SynchronisationEventKind.Skipped, relativePath, entry.Size));
-
-                continue;
-            }
-
-            if (await LocalFileMatchesManifestEntry(localPath, entry, manifest.HashAlgorithm, cancellationToken).ConfigureAwait(false))
+            if (await LocalFileMatchesManifestEntry(localPath, entry, cancellationToken).ConfigureAwait(false))
             {
                 filesUpToDate++;
 
@@ -127,6 +115,11 @@ public static class ContentBroker
 
         List<string> pendingDeletions = new ();
 
+        int filesDeleted = 0;
+        int filesFailed  = 0;
+
+        ConcurrentBag<SynchronisationFailure> failures = new ();
+
         if (Directory.Exists(targetDirectory))
         {
             foreach (string fullPath in Directory.EnumerateFiles(targetDirectory, "*", SearchOption.AllDirectories))
@@ -135,11 +128,26 @@ public static class ContentBroker
 
                 string relativePath = NormaliseRelativePath(Path.GetRelativePath(targetDirectory, fullPath));
 
+                // A Leftover Partial From An Interrupted Run Is Removed Immediately, Before Any Downloads Begin: A Re-Download Of The Same File Renames Its Fresh Partial Into Place, So A Deferred Deletion Of The Old Partial Would Find The Path Already Gone And Report A Spurious Failure
                 if (relativePath.EndsWith(PartialDownloadSuffix, StringComparison.OrdinalIgnoreCase))
                 {
-                    // A Leftover Partial From An Interrupted Run Is Removed, Unless It Is Protected By A Target Exclusion (Applied Here As It Is For Every Other Local File).
-                    if (MatchesAny(relativePath, targetExclusions) is false)
-                        pendingDeletions.Add(fullPath);
+                    try
+                    {
+                        ForceDelete(fullPath);
+
+                        filesDeleted++;
+
+                        progress?.Report(new SynchronisationEvent(SynchronisationEventKind.Deleted, relativePath, 0));
+                    }
+
+                    catch (Exception exception)
+                    {
+                        filesFailed++;
+
+                        failures.Add(new SynchronisationFailure(fullPath, exception.Message));
+
+                        progress?.Report(new SynchronisationEvent(SynchronisationEventKind.DeletionFailed, $@"{fullPath}: {exception.Message}", 0));
+                    }
 
                     continue;
                 }
@@ -157,7 +165,7 @@ public static class ContentBroker
         SynchronisationPlan plan = new
         (
             FilesToDownload:      pendingDownloads.Count,
-            FilesToDelete:        pendingDeletions.Count,
+            FilesToDelete:        filesDeleted + pendingDeletions.Count,
             FilesToSkip:          filesToSkip,
             FilesUpToDate:        filesUpToDate,
             TotalBytesToDownload: totalBytesToDownload
@@ -169,10 +177,7 @@ public static class ContentBroker
         using SemaphoreSlim semaphore = new (parallelTransfers, parallelTransfers);
 
         int filesDownloaded                = 0;
-        int filesFailed                    = 0;
         long bytesDownloaded               = 0;
-
-        ConcurrentBag<SynchronisationFailure> failures = new ();
 
         long totalBytesDownloaded          = 0;
         long lastReportTicks               = 0;
@@ -232,18 +237,12 @@ public static class ContentBroker
         // Report The Final Absolute Total Downloaded Bytes
         progress?.Report(new SynchronisationEvent(SynchronisationEventKind.ProgressUpdated, string.Empty, bytesDownloaded));
 
-        int filesDeleted = 0;
-
         foreach (string fullPath in pendingDeletions)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
-                // A Concurrent Download May Have Already Renamed A Completed File Over This Path, So A File That Is No Longer Present Is Not A Deletion Failure.
-                if (File.Exists(fullPath) is false)
-                    continue;
-
                 ForceDelete(fullPath);
 
                 filesDeleted++;
@@ -344,7 +343,7 @@ public static class ContentBroker
         File.Move(partialPath, download.LocalPath);
     }
 
-    private static async Task<bool> LocalFileMatchesManifestEntry(string localPath, ManifestEntry entry, string hashAlgorithm, CancellationToken cancellationToken)
+    private static async Task<bool> LocalFileMatchesManifestEntry(string localPath, ManifestEntry entry, CancellationToken cancellationToken)
     {
         FileInfo info = new (localPath);
 
@@ -354,34 +353,18 @@ public static class ContentBroker
         if (info.Length != entry.Size)
             return false;
 
-        // Verify With The Manifest's Declared Algorithm, Matching The Download Path, So A Non-SHA256 Manifest Does Not Make Every Local File Appear Out Of Date And Re-Download On Every Run.
-        string actualHashHex = await ComputeFileHashHex(localPath, hashAlgorithm, cancellationToken).ConfigureAwait(false);
-
-        return string.Equals(actualHashHex, entry.Hash, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static async Task<string> ComputeFileHashHex(string localPath, string hashAlgorithm, CancellationToken cancellationToken)
-    {
-        using IncrementalHash incrementalHash = CreateIncrementalHash(hashAlgorithm);
-
         FileStream fileStream = File.OpenRead(localPath);
 
         await using (fileStream.ConfigureAwait(false))
         {
-            byte[] buffer = new byte[81920];
+            using SHA256 sha256 = SHA256.Create();
 
-            while (true)
-            {
-                int bytesRead = await fileStream.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+            byte[] hashBytes = await sha256.ComputeHashAsync(fileStream, cancellationToken).ConfigureAwait(false);
 
-                if (bytesRead is 0)
-                    break;
+            string actualHashHex = Convert.ToHexStringLower(hashBytes);
 
-                incrementalHash.AppendData(buffer, 0, bytesRead);
-            }
+            return string.Equals(actualHashHex, entry.Hash, StringComparison.OrdinalIgnoreCase);
         }
-
-        return Convert.ToHexStringLower(incrementalHash.GetHashAndReset());
     }
 
     private static IncrementalHash CreateIncrementalHash(string hashAlgorithm)
@@ -401,56 +384,47 @@ public static class ContentBroker
     {
         HttpClient client = new ();
 
-        client.DefaultRequestHeaders.UserAgent.ParseAdd($"COMPEL/{GeneratedVersionInformation.VersionString}");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"COMPEL/{VersionChecker.CurrentVersionDisplay}");
         client.Timeout = timeout;
 
         return client;
     }
 
     private static string BuildManifestURL(string baseURL, string variant)
-        => $"{NormaliseBaseURL(baseURL)}{Uri.EscapeDataString(variant)}/{ManifestFileName}";
+    {
+        string normalisedBase = baseURL.EndsWith('/') ? baseURL : baseURL + '/';
+
+        return $"{normalisedBase}{Uri.EscapeDataString(variant)}/{ManifestFileName}";
+    }
 
     private static string BuildFileURL(string baseURL, string variant, string relativePath)
     {
+        string normalisedBase  = baseURL.EndsWith('/') ? baseURL : baseURL + '/';
         string escapedVariant  = Uri.EscapeDataString(variant);
         string escapedRelative = string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString));
 
-        return $"{NormaliseBaseURL(baseURL)}{escapedVariant}/{escapedRelative}";
+        return $"{normalisedBase}{escapedVariant}/{escapedRelative}";
     }
-
-    private static string NormaliseBaseURL(string baseURL)
-        => baseURL.EndsWith('/') ? baseURL : baseURL + '/';
 
     private static string NormaliseRelativePath(string relativePath)
         => relativePath.Replace('\\', '/');
 
-    // The Deletion Pass Must Mirror The Filesystem's Own Case Sensitivity: Case-Insensitive On Windows, Case-Sensitive On Linux. Using A Fixed Case-Insensitive Comparer Would Wrongly Keep A Stale File That Differs From A Manifest Entry Only In Case On Linux.
-    private static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-
-    private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-    // Whether "candidatePath" Resolves To A Location At Or Beneath "directory", Used To Reject Directory-Traversal Paths From The Manifest.
-    private static bool IsWithinDirectory(string directory, string candidatePath)
-    {
-        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
-        string full = Path.GetFullPath(candidatePath);
-
-        return full.Equals(root, PathComparison) || full.StartsWith(root + Path.DirectorySeparatorChar, PathComparison);
-    }
+    // The Deletion Pass Must Mirror The Filesystem's Own Case Sensitivity: A Fixed Case-Insensitive Comparer Would Wrongly Keep A Stale File That Differs From A Manifest Entry Only In Case On A Case-Sensitive Filesystem
+    private static StringComparer PathComparer =>
+          OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase
+        : OperatingSystem.IsMacOS()   ? StringComparer.OrdinalIgnoreCase
+        : OperatingSystem.IsLinux()   ? StringComparer.Ordinal
+        : throw new PlatformNotSupportedException($@"Unsupported Operating System: {Environment.OSVersion.Platform}");
 
     private static bool MatchesAny(string relativePath, Matcher matcher)
         => matcher.Match(relativePath).HasMatches;
 
-    private static Matcher BuildMatcher(IReadOnlyList<string> patterns, IReadOnlyList<string>? additionalPatterns = null)
+    private static Matcher BuildMatcher(IReadOnlyList<string> patterns)
     {
         Matcher matcher = new (StringComparison.OrdinalIgnoreCase);
 
         foreach (string pattern in patterns)
             matcher.AddInclude(pattern);
-
-        if (additionalPatterns is not null)
-            foreach (string pattern in additionalPatterns)
-                matcher.AddInclude(pattern);
 
         return matcher;
     }

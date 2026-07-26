@@ -29,6 +29,21 @@ catch (InvalidOperationException exception)
     return;
 }
 
+// COMPEL Mirrors The Match Server Distribution Into Its Installation Directory, So It Refuses To Start From A Directory Whose Contents Are Neither An Existing Installation Nor A Fresh Deployment: The Synchronisation's Deletion Pass Would Otherwise Remove Unrelated Files.
+LocationGuard.Result locationSafety = LocationGuard.AssessLocationSafety(DistributionSynchronisationService.ResolveInstallationDirectory(new CDNOptions().InstallationDirectory));
+
+if (locationSafety.Verdict is LocationSafetyVerdict.Unsafe)
+{
+    Console.WriteLine("COMPEL Will Not Start From This Directory Because It Contains The Following Unrelated Entries, Which The Distribution Synchronisation Would Delete:");
+
+    foreach (string foreignEntry in LocationGuard.ApplyForeignEntriesDisplayCap(locationSafety.ForeignEntries))
+        Console.WriteLine($"    - {foreignEntry}");
+
+    Console.WriteLine("Move COMPEL To An Empty Directory Or To An Existing Match Server Installation, Then Start It Again.");
+
+    return;
+}
+
 // The Control Plane Port Is Validated Here, Ahead Of Kestrel, So An Out-Of-Range Value Produces A Clear Message Rather Than An Unhandled Bind Failure Or A Silent Bind To An Arbitrary Ephemeral Port.
 if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 {
@@ -57,7 +72,7 @@ if (await MasterServerIsReachable(configuration.Gateway.Value) is false)
 }
 
 // Refuse To Start If Another COMPEL Instance Is Already Running Against This Installation.
-string lockFilePath = Path.Combine(AppContext.BaseDirectory, "COMPEL.lock");
+string lockFilePath = Path.Combine(AppContext.BaseDirectory, DeploymentManifest.LockFileName);
 
 if (SingleInstanceGuard.TryAcquire(lockFilePath, out SingleInstanceGuard singleInstanceGuard) is false)
 {
@@ -65,6 +80,9 @@ if (SingleInstanceGuard.TryAcquire(lockFilePath, out SingleInstanceGuard singleI
 
     return;
 }
+
+// Check For A Newer COMPEL Release And Offer To Self-Update Before Any Services Start. This Runs After The Single-Instance Lock So No Other COMPEL Process Holds The Files The Update Script Replaces; An Accepted Update Exits Into The Update Script And Never Returns.
+await UpdateGate.CheckForUpdates(singleInstanceGuard);
 
 // "CreateSlimBuilder" Initialises The Host With Only The Features Native AOT Needs, Keeping The Published Binary Small.
 WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(args);
@@ -98,7 +116,7 @@ builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.T
 // Logging: Serilog In Code (Native AOT Safe). Console Plus A Single "COMPEL.log" File Beside The Executable.
 builder.Logging.ClearProviders();
 
-string logFilePath = Path.Combine(AppContext.BaseDirectory, "COMPEL.log");
+string logFilePath = Path.Combine(AppContext.BaseDirectory, DeploymentManifest.LogFileName);
 
 // Write The Banner And This Session's Marker To The Log File Before The Logger Opens It, So Each Session Reads As A Distinct Block Headed By The Banner.
 Banner.WriteToLogFile(logFilePath);
