@@ -10,6 +10,7 @@ public sealed class ManagerArgumentsTests
         UserName             = "KONGOR",
         Password             = "secret",
         Instances            = 2,
+        IdleTarget           = 2,
         Gateway              = "kongor.net",
         Location             = "EU",
         ServerNamePrefix     = "KONGOR ARENA",
@@ -52,6 +53,7 @@ public sealed class ManagerArgumentsTests
             await Assert.That(joined.Contains("Set man_endServerPort 11236")).IsTrue();
             await Assert.That(joined.Contains("Set man_enableProxy true")).IsTrue();
             await Assert.That(joined.Contains("Set man_reauthFrequency 30000")).IsTrue();
+            await Assert.That(joined.Contains("Set man_idleTarget 2")).IsTrue();
             await Assert.That(joined.Contains("Set host_affinity -1")).IsTrue();
             await Assert.That(joined.Contains("Set svr_location EU")).IsTrue();
             await Assert.That(joined.Contains("Set svr_ip 1.2.3.4")).IsTrue();

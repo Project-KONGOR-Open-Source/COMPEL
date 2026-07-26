@@ -24,6 +24,7 @@ public sealed class CompelConfigurationLoaderTests
                 await Assert.That(file.RuntimeArtefactsPath.Value).IsEqualTo("DEFAULT");
                 await Assert.That(file.AuthenticationToken.Value).IsEqualTo("...");
                 await Assert.That(file.ControlPlanePort.Value).IsEqualTo(8080);
+                await Assert.That(file.IdleTarget.Value).IsEqualTo(1);
             }
         }
 

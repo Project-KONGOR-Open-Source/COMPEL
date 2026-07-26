@@ -10,6 +10,7 @@ public sealed class MatchServerManagerOptionsValidatorTests
         UserName             = "KONGOR",
         Password             = "secret",
         Instances            = 1,
+        IdleTarget           = 1,
         Gateway              = "kongor.net",
         Location             = "EU",
         ServerNamePrefix     = "KONGOR ARENA",
@@ -86,5 +87,33 @@ public sealed class MatchServerManagerOptionsValidatorTests
         options.PortRangeOffset = -1;
 
         await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Negative_Idle_Target_Is_Rejected()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.IdleTarget = -1;
+
+        await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    public async Task An_Idle_Target_Greater_Than_The_Instance_Count_Is_Rejected()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.Instances = 1;
+        options.IdleTarget = 2;
+
+        await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Zero_Idle_Target_Is_Accepted()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.IdleTarget = 0;
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
     }
 }

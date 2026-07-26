@@ -28,6 +28,7 @@ public static class ManagerArguments
             ["man_voiceProxyEndPort"]   = ports.LocalVoiceEnd.ToString(),
 
             ["man_maxServers"]          = processorCount.ToString(),
+            ["man_idleTarget"]          = options.IdleTarget.ToString(),
             ["man_enableProxy"]         = options.UseProxy ? "true" : "false",
             ["man_broadcastSlaves"]     = "true",
             ["man_autoServersPerCPU"]   = "1",
