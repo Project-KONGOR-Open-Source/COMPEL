@@ -5,14 +5,14 @@
         <RootNamespace>COMPEL</RootNamespace>
         <AssemblyName>COMPEL</AssemblyName>
 
-        <!-- Native AOT Compatibility: Bind Configuration And Generate Request Delegates Via Source Generators Rather Than Reflection. -->
+        <!-- Native AOT Compatibility: Bind Configuration And Generate Request Delegates Using Source Generators Rather Than Reflection -->
         <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
         <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
 
-        <!-- Reduces The Published Size And Avoids Loading Culture Data That Native AOT Cannot Trim Cleanly; The Code Uses Invariant String Operations Throughout. -->
+        <!-- Reduces The Published Size And Avoids Loading Culture Data That Native AOT Cannot Trim Cleanly; The Code Uses Invariant String Operations Throughout -->
         <InvariantGlobalization>true</InvariantGlobalization>
 
-        <!-- COMPEL Serves Only JSON Endpoints, So Static Web Assets Are Disabled To Keep Them (And The "staticwebassets.endpoints.json" Manifest) Out Of The Published Output. -->
+        <!-- COMPEL Serves Only JSON Endpoints, So Static Web Assets Are Disabled To Keep Them (And The "staticwebassets.endpoints.json" Manifest) Out Of The Published Output -->
         <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
 
         <ApplicationIcon>Assets\compel.ico</ApplicationIcon>
@@ -32,7 +32,7 @@
         <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     </ItemGroup>
 
-    <!-- Generates A Version String Constant From The Project's Version. -->
+    <!-- Generates A Version String Constant From The Project's Version -->
     <Target Name="GenerateVersionSource" BeforeTargets="CoreCompile" DependsOnTargets="PrepareForBuild">
         <PropertyGroup>
             <_GeneratedVersionFile>$(IntermediateOutputPath)GeneratedVersionInformation.g.cs</_GeneratedVersionFile>
