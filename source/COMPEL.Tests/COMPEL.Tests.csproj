@@ -7,7 +7,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="TUnit" Version="1.56.25" />
+        <PackageReference Include="TUnit" Version="1.65.68" />
     </ItemGroup>
 
     <!-- COMPEL Is An ASP.NET Core Application, So Loading Its Assembly For Testing Requires The Same Shared Framework. -->
