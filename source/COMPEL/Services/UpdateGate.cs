@@ -56,7 +56,7 @@ internal static class UpdateGate
         if (Console.IsInputRedirected)
             return;
 
-        if (PromptForUpdate(latestVersionDisplay) is false)
+        if (await PromptForUpdate(latestVersionDisplay) is false)
         {
             Console.WriteLine("Update Skipped By User");
 
@@ -100,7 +100,7 @@ internal static class UpdateGate
     }
 
     // Reads A Single Decision Key With A Visible Countdown, Defaulting To "Not Now" When The Countdown Elapses So An Unattended Terminal Never Blocks Startup
-    private static bool PromptForUpdate(string latestVersionDisplay)
+    private static async Task<bool> PromptForUpdate(string latestVersionDisplay)
     {
         long deadline = Environment.TickCount64 + (long) PromptTimeout.TotalMilliseconds;
 
@@ -119,7 +119,7 @@ internal static class UpdateGate
                 return key.Key is ConsoleKey.U;
             }
 
-            Thread.Sleep(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
         }
 
         Console.WriteLine();
