@@ -60,7 +60,7 @@ Authenticate management requests with `Authorization: Bearer <AuthenticationToke
 
 ## Building & Publishing
 
-Requires the .NET 10 SDK. A native, self-contained release is produced per platform via the publish profiles, or locally with the helper script (PowerShell 7+; on Windows, the Visual Studio C++ build tools are required for the Native AOT link step):
+Requires the .NET 11 SDK. A native, self-contained release is produced per platform via the publish profiles, or locally with the helper script (PowerShell 7+; on Windows, the Visual Studio C++ build tools are required for the Native AOT link step):
 
 ```
 pwsh scripts/Publish-Native-AOT-Release.ps1
