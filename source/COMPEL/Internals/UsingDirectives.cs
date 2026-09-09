@@ -1,5 +1,6 @@
 global using COMPEL;
 global using COMPEL.Configuration;
+global using COMPEL.Constants;
 global using COMPEL.Endpoints;
 global using COMPEL.Serialisation;
 global using COMPEL.Services;
@@ -8,6 +9,7 @@ global using COMPEL.Services.Maintenance;
 global using COMPEL.Services.Ping;
 global using COMPEL.Services.Proxy;
 global using COMPEL.Services.Supervision;
+global using COMPEL.Utilities;
 
 global using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 global using Microsoft.Extensions.Diagnostics.HealthChecks;

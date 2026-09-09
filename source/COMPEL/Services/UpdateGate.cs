@@ -11,10 +11,10 @@ internal static class UpdateGate
     /// <summary>
     ///     The console equivalent of the launcher's update dialog: the operator is prompted with <c>[U]pdate / [N]ot Now</c> and a countdown, with any key other than <c>U</c>, the countdown elapsing, or a non-interactive console all treated as "Not Now".
     /// </summary>
-    public static async Task CheckForUpdates(SingleInstanceGuard singleInstanceGuard)
+    public static async Task CheckForUpdates(Logger logger, SingleInstanceGuard singleInstanceGuard)
     {
-        Console.WriteLine($"Current Version: {VersionChecker.CurrentVersionDisplay}");
-        Console.WriteLine("Checking For Updates ...");
+        logger.Log(LogCategory.Version, $"Current Version: {VersionChecker.CurrentVersionDisplay}");
+        logger.Log(LogCategory.Version, "Checking For Updates ...");
 
         VersionCheckResult result;
 
@@ -29,52 +29,56 @@ internal static class UpdateGate
                 ? $"{(int) httpException.StatusCode} ({httpException.StatusCode})"
                 : "Unknown Status Code";
 
-            Console.WriteLine($"The COMPEL Releases Repository Is Not Reachable: HTTP {statusCode}");
+            logger.Log(LogCategory.Version, $"The COMPEL Releases Repository Is Not Reachable: HTTP {statusCode}");
 
             return;
         }
 
         catch (Exception exception)
         {
-            Console.WriteLine($"The COMPEL Releases Repository Is Not Reachable: {exception.GetType().Name}");
+            logger.Log(LogCategory.Version, $"The COMPEL Releases Repository Is Not Reachable: {exception.GetType().Name}");
 
             return;
         }
 
         if (result.IsUpdateAvailable is false || result.LatestVersion is null)
         {
-            Console.WriteLine("COMPEL Is Up To Date");
+            logger.Log(LogCategory.Version, "COMPEL Is Up To Date");
 
             return;
         }
 
         string latestVersionDisplay = $"v{result.LatestVersion.Major}.{result.LatestVersion.Minor}.{result.LatestVersion.Build}";
 
-        Console.WriteLine($"Update Available: {latestVersionDisplay}");
+        logger.Log(LogCategory.Version, $"Update Available: {latestVersionDisplay}");
 
         // A Non-Interactive Console (For Example A Service Manager Or A Redirected Pipeline) Cannot Answer A Prompt, So The Update Is Only Announced And Startup Continues
         if (Console.IsInputRedirected)
-            return;
-
-        if (await PromptForUpdate(latestVersionDisplay) is false)
         {
-            Console.WriteLine("Update Skipped By User");
+            logger.Log(LogCategory.Update, "Update Skipped (Non-Interactive Console)");
 
             return;
         }
 
-        Console.WriteLine("Update Accepted By User");
+        if (await PromptForUpdate(latestVersionDisplay) is false)
+        {
+            logger.Log(LogCategory.Update, "Update Skipped By User");
+
+            return;
+        }
+
+        logger.Log(LogCategory.Update, "Update Accepted By User");
 
         if (result.DownloadURL is null)
         {
-            Console.WriteLine($"No Downloadable Asset Found; Get The Update From {result.ReleasePageURL}");
+            logger.Log(LogCategory.Update, $"No Downloadable Asset Found; Get The Update From {result.ReleasePageURL}");
 
             return;
         }
 
         try
         {
-            Console.WriteLine($"Downloading Update From {result.DownloadURL} ...");
+            logger.Log(LogCategory.Update, $"Downloading Update From {result.DownloadURL} ...");
 
             IProgress<double>? downloadProgress = Console.IsOutputRedirected
                 ? null
@@ -85,7 +89,7 @@ internal static class UpdateGate
             if (Console.IsOutputRedirected is false)
                 Console.WriteLine($"\rDownloading {latestVersionDisplay}: 100%");
 
-            Console.WriteLine("Restarting Into The Update Script ...");
+            logger.Log(LogCategory.Update, "Restarting Into The Update Script ...");
 
             // The Lock Is Released Before The Process Exits So The Relaunched Instance Never Races Against Operating-System Handle Cleanup
             singleInstanceGuard.Dispose();
@@ -95,7 +99,7 @@ internal static class UpdateGate
 
         catch (Exception exception)
         {
-            Console.WriteLine($"Update Failed: {exception.Message}");
+            logger.Log(LogCategory.Update, $"Update Failed: {exception.Message}");
         }
     }
 
@@ -125,11 +129,5 @@ internal static class UpdateGate
         Console.WriteLine();
 
         return false;
-    }
-
-    // "Progress<T>" Posts Its Callbacks Asynchronously, Which Could Interleave A Stale Percentage With The Lines Printed After The Download Completes, So The Renderer Reports Synchronously Instead
-    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
-    {
-        public void Report(T value) => handler(value);
     }
 }
