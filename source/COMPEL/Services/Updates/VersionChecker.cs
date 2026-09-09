@@ -240,31 +240,7 @@ public static partial class VersionChecker
     {
         string scriptPath = Path.Combine(Path.GetTempPath(), "COMPEL.update.ps1");
 
-        // The Relative Paths Are Embedded As A PowerShell Single-Quoted Array Literal So Each One Can Be Force-Deleted Before The New Files Are Copied In
-        string pathArrayLiteral = string.Join(", ", relativePathsToReplace.Select(relativePath => $"'{relativePath}'"));
-
-        string script =
-        $$"""
-            Start-Sleep -Milliseconds 3500
-            $relativePathsToReplace = @({{pathArrayLiteral}})
-            foreach ($relativePath in $relativePathsToReplace) {
-                $stalePath = Join-Path '{{targetDirectory}}' $relativePath
-                if (Test-Path -LiteralPath $stalePath) {
-                    $staleItem = Get-Item -LiteralPath $stalePath -Force
-                    if ($staleItem.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
-                        $staleItem.Attributes = $staleItem.Attributes -band -bnot [System.IO.FileAttributes]::ReadOnly
-                    }
-                    Remove-Item -LiteralPath $stalePath -Force
-                }
-            }
-            Copy-Item -Path '{{sourceDirectory}}\*' -Destination '{{targetDirectory}}' -Recurse -Force
-            Start-Process -FilePath '{{executablePath}}'
-            Remove-Item -Path '{{sourceDirectory}}' -Recurse -Force
-            Remove-Item -Path '{{archivePath}}' -Force
-            Remove-Item -Path $MyInvocation.MyCommand.Source -Force
-        """;
-
-        File.WriteAllText(scriptPath, script);
+        File.WriteAllText(scriptPath, BuildWindowsUpdateScript(archivePath, sourceDirectory, targetDirectory, executablePath, relativePathsToReplace));
 
         Process.Start(new ProcessStartInfo
         {
@@ -274,6 +250,45 @@ public static partial class VersionChecker
             CreateNoWindow = true
         });
     }
+
+    /// <summary>
+    ///     Builds the PowerShell script that replaces the installed files with the extracted release and relaunches COMPEL.
+    ///     Every path is embedded in a single-quoted literal, so apostrophes are doubled first; a user profile directory can legitimately contain one.
+    /// </summary>
+    internal static string BuildWindowsUpdateScript(string archivePath, string sourceDirectory, string targetDirectory, string executablePath, string[] relativePathsToReplace)
+    {
+        string escapedArchivePath     = EscapePowerShellLiteral(archivePath);
+        string escapedSourceDirectory = EscapePowerShellLiteral(sourceDirectory);
+        string escapedTargetDirectory = EscapePowerShellLiteral(targetDirectory);
+        string escapedExecutablePath  = EscapePowerShellLiteral(executablePath);
+
+        // The Relative Paths Are Embedded As A PowerShell Single-Quoted Array Literal So Each One Can Be Force-Deleted Before The New Files Are Copied In
+        string pathArrayLiteral = string.Join(", ", relativePathsToReplace.Select(relativePath => $"'{EscapePowerShellLiteral(relativePath)}'"));
+
+        return
+        $$"""
+            Start-Sleep -Milliseconds 3500
+            $relativePathsToReplace = @({{pathArrayLiteral}})
+            foreach ($relativePath in $relativePathsToReplace) {
+                $stalePath = Join-Path '{{escapedTargetDirectory}}' $relativePath
+                if (Test-Path -LiteralPath $stalePath) {
+                    $staleItem = Get-Item -LiteralPath $stalePath -Force
+                    if ($staleItem.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                        $staleItem.Attributes = $staleItem.Attributes -band -bnot [System.IO.FileAttributes]::ReadOnly
+                    }
+                    Remove-Item -LiteralPath $stalePath -Force
+                }
+            }
+            Copy-Item -Path '{{escapedSourceDirectory}}\*' -Destination '{{escapedTargetDirectory}}' -Recurse -Force
+            Start-Process -FilePath '{{escapedExecutablePath}}'
+            Remove-Item -Path '{{escapedSourceDirectory}}' -Recurse -Force
+            Remove-Item -Path '{{escapedArchivePath}}' -Force
+            Remove-Item -Path $MyInvocation.MyCommand.Source -Force
+        """;
+    }
+
+    // A PowerShell Single-Quoted Literal Represents An Embedded Apostrophe As Two Apostrophes
+    private static string EscapePowerShellLiteral(string value) => value.Replace("'", "''");
 
     private static void SpawnLinuxUpdateScript(string archivePath, string sourceDirectory, string targetDirectory, string executablePath, string[] relativePathsToReplace)
     {

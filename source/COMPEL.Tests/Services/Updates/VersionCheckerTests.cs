@@ -83,4 +83,24 @@ public sealed class VersionCheckerTests
     [Test]
     public async Task The_Current_Version_Display_Is_The_V_Prefixed_Numeric_Version()
         => await Assert.That(VersionChecker.CurrentVersionDisplay).IsEqualTo($"v{VersionChecker.CurrentVersion.Major}.{VersionChecker.CurrentVersion.Minor}.{VersionChecker.CurrentVersion.Build}");
+
+    [Test]
+    public async Task Apostrophes_In_Paths_Are_Doubled_In_The_Windows_Update_Script()
+    {
+        string script = VersionChecker.BuildWindowsUpdateScript
+        (
+            archivePath:            @"C:\Users\O'Brien\AppData\Local\Temp\COMPEL.update.zip",
+            sourceDirectory:        @"C:\Users\O'Brien\AppData\Local\Temp\COMPEL.update",
+            targetDirectory:        @"C:\Servers\COMPEL",
+            executablePath:         @"C:\Servers\COMPEL\COMPEL.exe",
+            relativePathsToReplace: [ "COMPEL.exe" ]
+        );
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(script.Contains(@"'C:\Users\O''Brien\AppData\Local\Temp\COMPEL.update.zip'")).IsTrue();
+            await Assert.That(script.Contains(@"'C:\Users\O''Brien\AppData\Local\Temp\COMPEL.update\*'")).IsTrue();
+            await Assert.That(script.Contains(@"O'Brien")).IsFalse();
+        }
+    }
 }
