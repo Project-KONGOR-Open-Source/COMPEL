@@ -67,6 +67,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
         {
             logger.LogInformation("SKIP: Synchronisation Skipped (Manual Override)");
 
+            try { await ResolveDistributionVersionWithoutSynchronising(stoppingToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+
             SynchronisationState = "Disabled";
 
             ready.TrySetResult();
@@ -81,6 +84,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
         if (LocationGuard.AssessLocationSafety(InstallationDirectory).Verdict is not LocationSafetyVerdict.Safe)
         {
             logger.LogInformation("SKIP: Synchronisation Skipped (Development Environment)");
+
+            try { await ResolveDistributionVersionWithoutSynchronising(stoppingToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
 
             SynchronisationState = "Skipped (Development Environment)";
 
@@ -219,6 +225,29 @@ public sealed class DistributionSynchronisationService : BackgroundService
             synchronising = false;
 
             gate.Release();
+        }
+    }
+
+    /// <summary>
+    ///     Fetches only the manifest so the distribution version is known when the files themselves are not synchronised.
+    ///     The ping responder advertises that version, and clients discard any server whose version does not match their own, so an unknown version makes this host unselectable.
+    /// </summary>
+    private async Task ResolveDistributionVersionWithoutSynchronising(CancellationToken cancellationToken)
+    {
+        try
+        {
+            logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN", Variant);
+
+            Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, cancellationToken).ConfigureAwait(false);
+
+            logger.LogInformation("INIT: Manifest Version {Version} Lists {Count} File(s)", manifest.Version, manifest.Files.Count);
+
+            DistributionVersion = manifest.Version;
+        }
+
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning("FAIL: {ExceptionType} :: {Message} :: Pongs Will Advertise No Version And Clients Will Not List This Server", exception.GetType().Name, exception.Message);
         }
     }
 

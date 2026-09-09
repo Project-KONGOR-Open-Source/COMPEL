@@ -41,6 +41,9 @@ public sealed class UDPPingResponder : BackgroundService
         string? templateVersion = distribution.DistributionVersion;
         byte[] response = BuildResponseTemplate(options.ServerNamePrefix, templateVersion);
 
+        if (templateVersion is null)
+            logger.LogWarning("No Distribution Version Is Known; Pongs Will Advertise An Empty Version And Clients Will Not List This Server");
+
         using Socket socket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
         try
