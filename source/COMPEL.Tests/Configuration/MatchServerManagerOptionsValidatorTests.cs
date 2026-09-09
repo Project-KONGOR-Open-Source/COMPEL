@@ -47,6 +47,24 @@ public sealed class MatchServerManagerOptionsValidatorTests
     }
 
     [Test]
+    public async Task A_User_Name_Containing_Whitespace_Is_Rejected()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.UserName = "KON GOR";
+
+        await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Password_Containing_Whitespace_Is_Rejected()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.Password = "open sesame";
+
+        await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
     public async Task An_Unsupported_Location_Is_Rejected()
     {
         MatchServerManagerOptions options = ValidOptions();

@@ -61,6 +61,17 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
+    public async Task The_Location_Is_Upper_Cased_In_The_Execute_Payload()
+    {
+        MatchServerManagerOptions options = SampleOptions();
+        options.Location = "eu";
+
+        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net"));
+
+        await Assert.That(joined.Contains("Set svr_location EU")).IsTrue();
+    }
+
+    [Test]
     public async Task The_Execute_Payload_Is_A_Single_Argument_Wrapped_In_Literal_Quotes()
     {
         string[] arguments = Build();

@@ -45,7 +45,8 @@ public static class ManagerArguments
 
             // Any Server Configuration Options Other Than The Following Are Ignored By The Manager.
             ["svr_name"]                = ServerNameWithWhitespaceWorkaround(options.ServerNamePrefix),
-            ["svr_location"]            = options.Location,
+            // The Validator Accepts The Location In Any Case, But The Master Server Compares Regions Exactly
+            ["svr_location"]            = options.Location.ToUpperInvariant(),
             ["svr_ip"]                  = serverAddress,
 
             // Setting Affinity To "-1" Is Required So The Manager Can Assign Affinity To Its Child Processes.
