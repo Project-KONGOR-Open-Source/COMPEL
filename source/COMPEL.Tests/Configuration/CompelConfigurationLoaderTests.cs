@@ -93,18 +93,22 @@ public sealed class CompelConfigurationLoaderTests
     {
         string path = Path.Combine(Path.GetTempPath(), $"compel-configuration-{Guid.NewGuid():N}", "COMPEL.json");
 
-        bool threw = false;
+        string? message = null;
 
         try
         {
             CompelConfigurationLoader.Load(path);
         }
 
-        catch (InvalidOperationException)
+        catch (InvalidOperationException exception)
         {
-            threw = true;
+            message = exception.Message;
         }
 
-        await Assert.That(threw).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(message).IsNotNull();
+            await Assert.That(message?.StartsWith(@"""COMPEL.json"" Could Not Be Read")).IsTrue();
+        }
     }
 }

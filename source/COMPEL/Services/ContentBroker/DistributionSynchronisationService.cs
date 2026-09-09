@@ -8,6 +8,7 @@ namespace COMPEL.Services.ContentBroker;
 public sealed class DistributionSynchronisationService : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan VersionRecoveryDelay = TimeSpan.FromMinutes(1);
 
     private readonly CDNOptions options;
     private readonly ILogger<DistributionSynchronisationService> logger;
@@ -130,6 +131,10 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
                     ready.TrySetResult();
 
+                    // The Manifest Fetch Is What Failed When The Version Is Still Unknown, So It Is Retried In The Background Rather Than Left Unknown For The Life Of The Process
+                    if (DistributionVersion is null)
+                        await RecoverDistributionVersion(stoppingToken).ConfigureAwait(false);
+
                     break;
                 }
 
@@ -249,6 +254,41 @@ public sealed class DistributionSynchronisationService : BackgroundService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogWarning("FAIL: {ExceptionType} :: {Message} :: Pongs Will Advertise No Version And Clients Will Not List This Server", exception.GetType().Name, exception.Message);
+        }
+    }
+
+    /// <summary>
+    ///     Retries the manifest fetch until the distribution version is known, for the case where the fetch failed and the existing local distribution was accepted.
+    ///     Only the manifest is fetched, never the files, because the manager may already be running against this installation by the time this runs.
+    ///     Each failed attempt is logged at debug level so a long outage does not flood the log; the ping responder rebuilds its template as soon as the version arrives.
+    /// </summary>
+    private async Task RecoverDistributionVersion(CancellationToken stoppingToken)
+    {
+        logger.LogWarning("FAIL: The Distribution Version Is Unknown; Pongs Will Advertise No Version And Clients Will Not List This Server Until The Manifest Can Be Fetched");
+
+        while (stoppingToken.IsCancellationRequested is false && DistributionVersion is null)
+        {
+            try { await Task.Delay(VersionRecoveryDelay, stoppingToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+
+            try
+            {
+                Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, stoppingToken).ConfigureAwait(false);
+
+                DistributionVersion = manifest.Version;
+
+                logger.LogInformation("INIT: Manifest Version {Version} Was Recovered Without Synchronising", manifest.Version);
+            }
+
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            catch (Exception exception)
+            {
+                logger.LogDebug("FAIL: {ExceptionType} :: {Message}", exception.GetType().Name, exception.Message);
+            }
         }
     }
 

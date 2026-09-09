@@ -9,6 +9,8 @@ public sealed class Logger
     private string FilePath { get; }
     private Lock FileLock { get; } = new ();
 
+    private bool fileWriteFailureReported;
+
     public Logger(string filePath)
     {
         FilePath = filePath;
@@ -22,6 +24,7 @@ public sealed class Logger
 
     /// <summary>
     ///     Formats a timestamped log entry and writes it to the console and to the log file.
+    ///     The file write is best-effort: a locked or full log file degrades logging rather than throwing into the hosted service that called it, which would stop the host.
     /// </summary>
     public void Log(string category, string message)
     {
@@ -31,7 +34,21 @@ public sealed class Logger
         {
             Console.WriteLine(entry);
 
-            File.AppendAllText(FilePath, entry + Environment.NewLine);
+            try
+            {
+                File.AppendAllText(FilePath, entry + Environment.NewLine);
+            }
+
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Reported Once Per Session So A Persistently Unwritable Log File Does Not Fill The Console With The Same Failure
+                if (fileWriteFailureReported is false)
+                {
+                    fileWriteFailureReported = true;
+
+                    Console.WriteLine($@"COMPEL Could Not Write To Its Log File ""{FilePath}"": {exception.Message}");
+                }
+            }
         }
     }
 }

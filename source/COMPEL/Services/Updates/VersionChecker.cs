@@ -295,6 +295,7 @@ public static partial class VersionChecker
         string scriptPath = Path.Combine(Path.GetTempPath(), "COMPEL.update.sh");
 
         // The Relative Paths Are Embedded As A Bash Single-Quoted Word List So Each One Can Be Force-Deleted Before The New Files Are Copied In
+        // No Escaping Is Needed Here, Unlike The Windows Script: These Paths Come From COMPEL's Own Release Archive, And The Directory Paths Below Sit In Double-Quoted Strings Where An Apostrophe Is Literal
         string pathWordList = string.Join(" ", relativePathsToReplace.Select(relativePath => $"'{relativePath}'"));
 
         string script =
