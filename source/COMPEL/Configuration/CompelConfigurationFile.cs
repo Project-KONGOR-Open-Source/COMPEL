@@ -48,13 +48,13 @@ public sealed class WarmInstancesTargetSetting
 public sealed class GatewaySetting
 {
     public string Value { get; set; } = "kongor.net";
-    public string Description => "The entry point for game servers and the server manager. Use 'kongor.net' for the official public gateway, 'localhost' for local development, a LAN or public IP address, or a local or public host name to resolve.";
+    public string Description => "The entry point for game servers and the server manager. Use 'kongor.net' for the official public gateway, 'localhost' for local development, 'PUBLIC' to auto-detect the public IP address, a LAN or public IP address, or a local or public host name to resolve.";
 }
 
 public sealed class LocationSetting
 {
     public string Value { get; set; } = "EU";
-    public string Description => "Normally, the location can be set to any value, but, in order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', and 'SEA'.";
+    public string Description => "Normally, the location can be set to any value, but, in order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH'.";
 }
 
 public sealed class ServerNamePrefixSetting

@@ -2,7 +2,7 @@ namespace COMPEL.Configuration;
 
 /// <summary>
 ///     The host-supplied configuration that governs how COMPEL launches and supervises the Heroes Of Newerth match server manager.
-///     These are the cross-platform equivalents of the keys that the legacy COMPEL stored in its "COMPEL.JSON" file.
+///     These are the cross-platform equivalents of the keys that the legacy COMPEL stored in its "COMPEL.json" file.
 /// </summary>
 public sealed class MatchServerManagerOptions
 {
@@ -34,7 +34,7 @@ public sealed class MatchServerManagerOptions
     /// <summary>
     ///     The server region. In order for the server to be TMM-compatible, only the values "USW", "USE", "EU", "AU", "BR", "RU", "SEA", and "NEWERTH" are valid.
     /// </summary>
-    public string Location { get; set; } = "NEWERTH";
+    public string Location { get; set; } = "EU";
 
     /// <summary>
     ///     The base name of the game server instances. The server manager appends the one-based index of each instance to this base name.
