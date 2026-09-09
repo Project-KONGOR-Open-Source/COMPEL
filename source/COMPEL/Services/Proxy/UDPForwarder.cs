@@ -9,14 +9,15 @@ internal sealed class UDPForwarder : IDisposable
 {
     private const int DatagramBufferSize = 65535;
 
-    // The Challenge Packet's Leading Watermark Bytes, Which The Client Skips Before Reading The Control Payload: WATERMARK_LEN_TOTAL (20) Plus ENHANCED_WATERMARK_LEN_TOTAL (20).
+    // The Challenge Packet's Leading Watermark Bytes, Which The Client Skips Before Reading The Control Payload: WATERMARK_LEN_TOTAL (20) Plus ENHANCED_WATERMARK_LEN_TOTAL (20)
     private const int WatermarkPrefixLength = 40;
 
-    // Identifies A Proxy Control Packet (PACKET_PROXY, Bit 6) And The Challenge Sub-Type Within It.
+    // Identifies A Proxy Control Packet (PACKET_PROXY, Bit 6) And The Challenge Sub-Type Within It
     private const byte ProxyPacketFlag = 0x40;
     private const byte ChallengePacketType = 0x00;
 
-    // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge, And The Per-Challenge Packet Counters It Is Granted. The Counters Are Maximised Because The Proxy Does Not Perform The Native Build's Rate-Based Cheat Detection; Renewal Well Within The Window Keeps The Client Authenticated Continuously.
+    // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge, And The Per-Challenge Packet Counters It Is Granted
+    // The Counters Are Maximised Because The Proxy Does Not Perform The Native Build's Rate-Based Cheat Detection; Renewal Well Within The Window Keeps The Client Authenticated Continuously
     private const ushort ChallengeExpirySeconds = 60;
     private const ushort ChallengeMaximumCounter = ushort.MaxValue;
     private const ushort ChallengeMaximumGameCommandCounter = ushort.MaxValue;
@@ -27,7 +28,7 @@ internal sealed class UDPForwarder : IDisposable
     private readonly ConcurrentDictionary<IPEndPoint, ClientSession> sessions = new ();
     private readonly Lock sessionsLock = new ();
 
-    // The Client Accepts A Renewed Challenge Only When Its Value Differs From The Previous One And Its Timestamp Is Strictly Greater, So A Single Monotonically-Increasing Sequence Drives Both Fields.
+    // The Client Accepts A Renewed Challenge Only When Its Value Differs From The Previous One And Its Timestamp Is Strictly Greater, So A Single Monotonically-Increasing Sequence Drives Both Fields
     private long challengeSequence;
 
     public int PublicPort { get; }
@@ -46,7 +47,9 @@ internal sealed class UDPForwarder : IDisposable
         frontSocket.Bind(new IPEndPoint(IPAddress.Any, publicPort));
     }
 
-    // On Windows A UDP Socket Reports A Received ICMP Port-Unreachable As A Connection-Reset Error On The Next Socket Operation. Disabling It (SIO_UDP_CONNRESET) Stops A Momentarily-Down Server From Killing The Relay With Spurious Exceptions. The Control Code Does Not Exist On Other Platforms.
+    // On Windows A UDP Socket Reports A Received ICMP Port-Unreachable As A Connection-Reset Error On The Next Socket Operation
+    // Disabling It (SIO_UDP_CONNRESET) Stops A Momentarily-Down Server From Killing The Relay With Spurious Exceptions
+    // The Control Code Does Not Exist On Other Platforms
     private static void DisableConnectionResetReporting(Socket socket)
     {
         if (OperatingSystem.IsWindows() is false)
@@ -79,7 +82,7 @@ internal sealed class UDPForwarder : IDisposable
             try { session = GetOrCreateSession(client, stoppingToken, out created); }
             catch (Exception exception) { logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client); continue; }
 
-            // Authenticate A New Client Immediately So It Does Not Exhaust Its Unauthenticated Packet Budget Waiting For The First Periodic Renewal.
+            // Authenticate A New Client Immediately So It Does Not Exhaust Its Unauthenticated Packet Budget Waiting For The First Periodic Renewal
             if (created)
                 SendChallenge(client);
 
@@ -104,13 +107,13 @@ internal sealed class UDPForwarder : IDisposable
     {
         uint sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
 
-        // The Value Must Be Non-Zero, As Zero Marks An Unauthenticated Session On The Client; Skip It On The Rare Wrap-Around.
+        // The Value Must Be Non-Zero, As Zero Marks An Unauthenticated Session On The Client; Skip It On The Rare Wrap-Around
         if (sequence is 0)
             sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
 
         byte[] packet = BuildChallengePacket(sequence, sequence);
 
-        // The Challenge Must Originate From This (Front) Socket So Its Source Address And Port Match The Endpoint The Client Sends Its Game Traffic To, Which Is How The Client Keys The Authenticated Session.
+        // The Challenge Must Originate From This (Front) Socket So Its Source Address And Port Match The Endpoint The Client Sends Its Game Traffic To, Which Is How The Client Keys The Authenticated Session
         try { frontSocket.SendTo(packet, SocketFlags.None, client); }
         catch (Exception exception) { logger.LogDebug(exception, "Failed To Send Challenge To {Client}", client); }
     }
@@ -119,7 +122,7 @@ internal sealed class UDPForwarder : IDisposable
     {
         byte[] packet = new byte[WatermarkPrefixLength + 18];
 
-        // The First Forty Bytes Are The Watermark Prefix The Client Skips Unread And Are Left Zeroed.
+        // The First Forty Bytes Are The Watermark Prefix The Client Skips Unread And Are Left Zeroed
         Span<byte> payload = packet.AsSpan(WatermarkPrefixLength);
 
         payload[0] = 0xFF;
@@ -185,7 +188,8 @@ internal sealed class UDPForwarder : IDisposable
                     received = await session.UpstreamSocket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken).ConfigureAwait(false);
                 }
 
-                // A Connected UDP Socket Surfaces An ICMP Port-Unreachable (For Example While The Server Instance Is Briefly Down Between Restarts) As A Connection-Reset Or Connection-Refused Socket Error. This Is Transient, So The Pump Keeps Running Rather Than Tearing The Session Down And Leaving The Client Permanently Unable To Receive Server Traffic.
+                // A Connected UDP Socket Surfaces An ICMP Port-Unreachable (For Example While The Server Instance Is Briefly Down Between Restarts) As A Connection-Reset Or Connection-Refused Socket Error
+                // This Is Transient, So The Pump Keeps Running Rather Than Tearing The Session Down And Leaving The Client Permanently Unable To Receive Server Traffic
                 catch (SocketException exception) when (exception.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionRefused)
                 {
                     continue;
@@ -206,7 +210,8 @@ internal sealed class UDPForwarder : IDisposable
 
         finally
         {
-            // Remove This Session So The Client's Next Datagram Transparently Creates A Fresh One, Rather Than Reusing A Pump That Has Stopped Relaying. The Reference Check Ensures A Newer Session For The Same Client (Created After A Race With Eviction) Is Never Removed.
+            // Remove This Session So The Client's Next Datagram Transparently Creates A Fresh One, Rather Than Reusing A Pump That Has Stopped Relaying
+            // The Reference Check Ensures A Newer Session For The Same Client (Created After A Race With Eviction) Is Never Removed
             lock (sessionsLock)
             {
                 if (sessions.TryGetValue(client, out ClientSession? current) && ReferenceEquals(current, session))
@@ -220,7 +225,7 @@ internal sealed class UDPForwarder : IDisposable
     {
         long cutoff = Environment.TickCount64 - (long)idleTimeout.TotalMilliseconds;
 
-        // Sweep Under The Same Lock That Guards Session Creation So An Idle Session Can Never Be Removed And Disposed While A Datagram For The Same Client Is Concurrently Creating A Replacement, Which Would Otherwise Leak Whichever Session Lost The Race.
+        // Sweep Under The Same Lock That Guards Session Creation So An Idle Session Can Never Be Removed And Disposed While A Datagram For The Same Client Is Concurrently Creating A Replacement, Which Would Otherwise Leak Whichever Session Lost The Race
         lock (sessionsLock)
         {
             foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
@@ -266,11 +271,11 @@ internal sealed class UDPForwarder : IDisposable
 
         public void Dispose()
         {
-            // Idempotent: The Recycle, Eviction, And Shutdown Paths Can All Reach A Session, So Disposal Runs Exactly Once Rather Than Cancelling An Already-Disposed Token Source.
+            // Idempotent: The Recycle, Eviction, And Shutdown Paths Can All Reach A Session, So Disposal Runs Exactly Once Rather Than Cancelling An Already-Disposed Token Source
             if (Interlocked.Exchange(ref disposed, 1) is not 0)
                 return;
 
-            // Cancel First So The Server-To-Client Pump Stops Awaiting Its Socket Before It Is Torn Down.
+            // Cancel First So The Server-To-Client Pump Stops Awaiting Its Socket Before It Is Torn Down
             Cancellation.Cancel();
             Cancellation.Dispose();
             UpstreamSocket.Dispose();

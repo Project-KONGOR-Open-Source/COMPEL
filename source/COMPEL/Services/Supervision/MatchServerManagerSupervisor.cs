@@ -40,7 +40,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
     public string? ServerAddress { get; private set; }
 
-    // Backed By A Volatile Flag Maintained By The Launch, Exit, And Stop Paths Rather Than Reading "Process.HasExited" Live: The Control Plane And Health Checks Read This From Other Threads, And Touching A "Process" Instance That The Launch Or Stop Path Is Concurrently Disposing Would Throw.
+    // Backed By A Volatile Flag Maintained By The Launch, Exit, And Stop Paths Rather Than Reading "Process.HasExited" Live: The Control Plane And Health Checks Read This From Other Threads, And Touching A "Process" Instance That The Launch Or Stop Path Is Concurrently Disposing Would Throw
     public bool IsRunning => managerRunning;
 
     /// <summary>
@@ -57,7 +57,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         try { await distribution.WaitUntilReady(stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException) { return; }
 
-        // Resolve The Advertised Address, Retrying With Backoff Rather Than Giving Up: A Transient Failure (For Example A DNS Hiccup Or A Public-IP Lookup Timing Out) At Startup Must Not Permanently Disable The Supervisor While COMPEL Keeps Running And Reporting Success.
+        // Resolve The Advertised Address, Retrying With Backoff Rather Than Giving Up: A Transient Failure (For Example A DNS Hiccup Or A Public-IP Lookup Timing Out) At Startup Must Not Permanently Disable The Supervisor While COMPEL Keeps Running And Reporting Success
         while (stoppingToken.IsCancellationRequested is false)
         {
             try
@@ -86,7 +86,8 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         LogPortAllocation();
 
-        // When The Proxy Is Enabled The Manager Advertises Public Ports (Local + 10000) That Only Work If The Proxy Bound Them. If No Forwarder Could Bind, Launching The Manager Would Register Unreachable Public Ports With The Master Server, So The Launch Is Refused Instead.
+        // When The Proxy Is Enabled The Manager Advertises Public Ports (Local + 10000) That Only Work If The Proxy Bound Them
+        // If No Forwarder Could Bind, Launching The Manager Would Register Unreachable Public Ports With The Master Server, So The Launch Is Refused Instead
         if (options.UseProxy)
         {
             bool proxyReady;
@@ -102,8 +103,8 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
             }
         }
 
-        // Event-Driven Reconcile Loop: Each Pass Brings The Process State Into Line With The Desired State, Then Waits For The Next Change (A Process Exit Or A Control-Plane Request).
-        // Whenever The Manager Should Be Running But Isn't, The Wait Is Bounded By "RestartBackoff" So A Launch Failure (E.G. A Missing Executable) Retries Automatically Instead Of Stalling Forever With No Signal To Wake It.
+        // Event-Driven Reconcile Loop: Each Pass Brings The Process State Into Line With The Desired State, Then Waits For The Next Change (A Process Exit Or A Control-Plane Request)
+        // Whenever The Manager Should Be Running But Isn't, The Wait Is Bounded By "RestartBackoff" So A Launch Failure (For Example A Missing Executable) Retries Automatically Instead Of Stalling Forever With No Signal To Wake It
         while (stoppingToken.IsCancellationRequested is false)
         {
             await Reconcile(stoppingToken).ConfigureAwait(false);
@@ -125,7 +126,9 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         {
             if (desiredRunning && IsRunning is false)
             {
-                // Never Launch While A Synchronisation Is Rewriting The Installation Directory: The Servers Would Hold Files The Synchronisation Is Replacing. The Reconcile Loop Retries After The Backoff. This Is Not Counted As A Launch Attempt, So The Backoff Is Not Consumed While Waiting.
+                // Never Launch While A Synchronisation Is Rewriting The Installation Directory: The Servers Would Hold Files The Synchronisation Is Replacing
+                // The Reconcile Loop Retries After The Backoff
+                // This Is Not Counted As A Launch Attempt, So The Backoff Is Not Consumed While Waiting
                 if (distribution.IsSynchronising)
                     return;
 
@@ -141,7 +144,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
                     catch (OperationCanceledException) { return; }
                 }
 
-                // Recorded Before The Attempt, Not Only On Success, So A Launch That Throws Still Enforces The Backoff On The Next Attempt Rather Than Retrying In A Tight Loop.
+                // Recorded Before The Attempt, Not Only On Success, So A Launch That Throws Still Enforces The Backoff On The Next Attempt Rather Than Retrying In A Tight Loop
                 lastAttemptTicks = Environment.TickCount64;
 
                 LaunchProcess();
@@ -171,7 +174,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         if (File.Exists(executable) is false)
             throw new FileNotFoundException($@"Manager Executable Was Not Found At ""{executable}""");
 
-        // The Synchronised Server Binary Arrives Without The Unix Execute Bit, So It Is Set Here Before Every Launch (On Windows This Is A No-Op).
+        // The Synchronised Server Binary Arrives Without The Unix Execute Bit, So It Is Set Here Before Every Launch (On Windows This Is A No-Op)
         EnsureExecutable(executable);
 
         string address = ServerAddress ?? throw new InvalidOperationException("The Server Address Has Not Been Resolved");
@@ -185,11 +188,11 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
             previous.Dispose();
         }
 
-        // Best-Effort: Heroes Of Newerth Creates Its Own Artefacts Directory On Launch, So A Failure To Pre-Create It (For Example A Permissions Issue On The Fixed Linux Location) Must Not Block The Launch.
+        // Best-Effort: Heroes Of Newerth Creates Its Own Artefacts Directory On Launch, So A Failure To Pre-Create It (For Example A Permissions Issue On The Fixed Linux Location) Must Not Block The Launch
         try { Directory.CreateDirectory(artefacts.ArtefactsDirectory); }
         catch (Exception exception) { logger.LogDebug(exception, "Could Not Pre-Create The Artefacts Directory {Directory}", artefacts.ArtefactsDirectory); }
 
-        // Sweep Before Every Launch, Not Only At Startup: A Previous Manager's Spawned Servers Can Be Reparented (For Example To The Init Process) And So Escape "Process.Kill(entireProcessTree)", Leaving Them Holding The Ports This Launch Is About To Bind.
+        // Sweep Before Every Launch, Not Only At Startup: A Previous Manager's Spawned Servers Can Be Reparented (For Example To The Init Process) And So Escape "Process.Kill(entireProcessTree)", Leaving Them Holding The Ports This Launch Is About To Bind
         KillOrphanedProcesses();
 
         string[] arguments = ManagerArguments.Build(options, Ports, address, addressResolver.MasterServerHostAndPort);
@@ -200,14 +203,15 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
             UseShellExecute = false
         };
 
-        // Windows Receives The Command Line Verbatim, So Heroes Of Newerth Sees The Literal Quotes Around The "-execute" Payload. On Linux ".NET" Strips Grouping Quotes From A Joined String, So Each Argument Is Passed Individually Via "ArgumentList" And The Payload Retains Its Own Literal Quotes When Heroes Of Newerth Rejoins Its Command Line.
+        // Windows Receives The Command Line Verbatim, So Heroes Of Newerth Sees The Literal Quotes Around The "-execute" Payload
+        // On Linux ".NET" Strips Grouping Quotes From A Joined String, So Each Argument Is Passed Individually Via "ArgumentList" And The Payload Retains Its Own Literal Quotes When Heroes Of Newerth Rejoins Its Command Line
         if (OperatingSystem.IsWindows())
             startInfo.Arguments = string.Join(' ', arguments);
         else
             foreach (string argument in arguments)
                 startInfo.ArgumentList.Add(argument);
 
-        // Heroes Of Newerth Derives Its Documents Tree From The Home Directory, So The Child's Home Is Redirected To The Resolved Artefacts Location.
+        // Heroes Of Newerth Derives Its Documents Tree From The Home Directory, So The Child's Home Is Redirected To The Resolved Artefacts Location
         if (OperatingSystem.IsWindows())
             startInfo.EnvironmentVariables["USERPROFILE"] = artefacts.ProfileDirectory;
         else
@@ -225,7 +229,8 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         logger.LogInformation("Launched The Match Server Manager (Process {ProcessID})", process.Id);
 
-        // If The Process Exited Between "Start" And Now, The "Exited" Event May Have Already Run And Cleared The Running Flag Before This Method Set It. Re-Check So An Instantly-Exiting Manager Does Not Leave The State Stuck Reporting Running With No Live Process, And Wake The Reconcile Loop To Apply The Backoff And Relaunch.
+        // If The Process Exited Between "Start" And Now, The "Exited" Event May Have Already Run And Cleared The Running Flag Before This Method Set It
+        // Re-Check So An Instantly-Exiting Manager Does Not Leave The State Stuck Reporting Running With No Live Process, And Wake The Reconcile Loop To Apply The Backoff And Relaunch
         if (process.HasExited)
         {
             managerRunning = false;

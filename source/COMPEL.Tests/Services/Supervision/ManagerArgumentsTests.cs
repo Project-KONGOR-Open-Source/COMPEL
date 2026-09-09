@@ -47,7 +47,7 @@ public sealed class ManagerArgumentsTests
 
         using (Assert.Multiple())
         {
-            // The Master Login Carries A Trailing Colon So The Manager Can Append A Per-Instance Index.
+            // The Master Login Carries A Trailing Colon So The Manager Can Append A Per-Instance Index
             await Assert.That(joined.Contains("Set man_masterLogin KONGOR:")).IsTrue();
             await Assert.That(joined.Contains("Set man_startServerPort 11235")).IsTrue();
             await Assert.That(joined.Contains("Set man_endServerPort 11236")).IsTrue();

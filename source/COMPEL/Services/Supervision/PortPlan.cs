@@ -48,7 +48,8 @@ public sealed class PortPlan
     {
     }
 
-    // Local Ports: The Ports The Game Servers Actually Bind. The Manager Always Allocates These In The 112xx / 114xx Range, Regardless Of Whether The Proxy Is Enabled.
+    // Local Ports: The Ports The Game Servers Actually Bind
+    // The Manager Always Allocates These In The 112xx / 114xx Range, Regardless Of Whether The Proxy Is Enabled
 
     public int LocalGameStart => BaseGamePort + Offset;
 
@@ -58,7 +59,8 @@ public sealed class PortPlan
 
     public int LocalVoiceEnd => LocalVoiceStart + Instances - 1;
 
-    // Public Ports: The Ports Clients Connect To. Without The Proxy They Equal The Local Ports; With The Proxy They Are Offset Above Them, And The Proxy Forwards Them Down To The Local Ports.
+    // Public Ports: The Ports Clients Connect To
+    // Without The Proxy They Equal The Local Ports; With The Proxy They Are Offset Above Them, And The Proxy Forwards Them Down To The Local Ports
 
     public int PublicGameStart => UseProxy ? LocalGameStart + ProxyPublicOffset : LocalGameStart;
 

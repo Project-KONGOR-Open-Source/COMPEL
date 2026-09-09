@@ -6,7 +6,8 @@ namespace COMPEL.Endpoints;
 /// </summary>
 internal static class ControlPlaneAuthentication
 {
-    // The Default, Unconfigured Token In "COMPEL.json". Treated The Same As An Empty Token (Remote Management Disabled) So The Generated Configuration Does Not Enable Management With A Known Placeholder.
+    // The Default, Unconfigured Token In "COMPEL.json"
+    // Treated The Same As An Empty Token (Remote Management Disabled) So The Generated Configuration Does Not Enable Management With A Known Placeholder
     private const string PlaceholderToken = "...";
 
     /// <summary>

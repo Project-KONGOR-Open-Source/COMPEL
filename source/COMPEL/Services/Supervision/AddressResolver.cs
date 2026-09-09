@@ -51,7 +51,7 @@ public sealed class AddressResolver
 
         else if (IPAddress.TryParse(gateway, out IPAddress? parsed))
         {
-            // "MapToIPv4" Silently Reinterprets Any IPv6 Address's Low-Order Bits Rather Than Throwing, So A Genuine (Non-Mapped) IPv6 Literal Must Be Rejected Explicitly Here.
+            // "MapToIPv4" Silently Reinterprets Any IPv6 Address's Low-Order Bits Rather Than Throwing, So A Genuine (Non-Mapped) IPv6 Literal Must Be Rejected Explicitly Here
             if (parsed.AddressFamily is AddressFamily.InterNetworkV6 && parsed.IsIPv4MappedToIPv6 is false)
                 throw new InvalidOperationException($@"Gateway ""{gateway}"" Is An IPv6 Address; COMPEL Requires An IPv4 Address");
 

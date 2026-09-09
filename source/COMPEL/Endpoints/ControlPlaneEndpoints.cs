@@ -9,7 +9,7 @@ public static class ControlPlaneEndpoints
     {
         long startTicks = Environment.TickCount64;
 
-        // Anonymous Latency Probe.
+        // Anonymous Latency Probe
         application.MapGet("/ping", () => TypedResults.Ok(new PingResponse("COMPEL", GeneratedVersionInformation.VersionString, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
         RouteGroupBuilder management = application.MapGroup(string.Empty);
@@ -64,15 +64,17 @@ public static class ControlPlaneEndpoints
 
         management.MapPost("/sync", IResult (DistributionSynchronisationService distribution, MatchServerManagerSupervisor supervisor, IHostApplicationLifetime lifetime) =>
         {
-            // Synchronising Rewrites The Installation Directory The Manager Runs From. Doing So While The Manager Is Running Would Delete Or Overwrite Files The Live Servers Hold Open (A Sharing Violation On Windows, A Replaced Inode On Linux), So The Manager Must Be Stopped First. Checking The Desired State (Not Just The Live State) Also Rejects The Request When The Manager Has Merely Crashed And The Supervisor Is About To Relaunch It.
+            // Synchronising Rewrites The Installation Directory The Manager Runs From
+            // Doing So While The Manager Is Running Would Delete Or Overwrite Files The Live Servers Hold Open (A Sharing Violation On Windows, A Replaced Inode On Linux), So The Manager Must Be Stopped First
+            // Checking The Desired State (Not Just The Live State) Also Rejects The Request When The Manager Has Merely Crashed And The Supervisor Is About To Relaunch It
             if (supervisor.IsRunning || supervisor.DesiredRunning)
                 return TypedResults.Conflict(new ActionResponse("sync", false, @"The Match Server Manager Must Be Stopped Via ""/instances/stop"" Before Synchronising"));
 
-            // Synchronisation Can Take A While, So It Runs In The Background; The Result Is Observable Via "/status".
+            // Synchronisation Can Take A While, So It Runs In The Background; The Result Is Observable Via "/status"
             _ = Task.Run(async () =>
             {
                 try { await distribution.SynchroniseNow(lifetime.ApplicationStopping).ConfigureAwait(false); }
-                catch { /* The Outcome Is Recorded On The Service's State And The Failure Is Logged Within. */ }
+                catch { /* The Outcome Is Recorded On The Service's State And The Failure Is Logged Within */ }
             });
 
             return TypedResults.Ok(new ActionResponse("sync", true, "Synchronisation Started"));

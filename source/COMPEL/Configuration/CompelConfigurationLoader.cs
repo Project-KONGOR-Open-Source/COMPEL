@@ -7,7 +7,7 @@ public static class CompelConfigurationLoader
 {
     private const string FileName = DeploymentManifest.ConfigurationFileName;
 
-    // A Dedicated Context Whose Options Indent The Output And Avoid Escaping Apostrophes And Slashes In The Descriptions, So The Generated File Reads Cleanly.
+    // A Dedicated Context Whose Options Indent The Output And Avoid Escaping Apostrophes And Slashes In The Descriptions, So The Generated File Reads Cleanly
     private static readonly CompelConfigurationJSONContext WriteContext = new (new JsonSerializerOptions
     {
         WriteIndented = true,
@@ -65,7 +65,8 @@ public static class CompelConfigurationLoader
             throw new InvalidOperationException($@"""COMPEL.json"" Is Not Valid: {exception.Message}", exception);
         }
 
-        // A Setting Explicitly Set To "null" In The File Deserialises As A Null Object, So Each Is Coalesced Back To Its Default. This Keeps A Null Setting Behaving Like A Missing One (Falling Back To Its Default) Rather Than Faulting Later When Its Value Is Read.
+        // A Setting Explicitly Set To "null" In The File Deserialises As A Null Object, So Each Is Coalesced Back To Its Default
+        // This Keeps A Null Setting Behaving Like A Missing One (Falling Back To Its Default) Rather Than Faulting Later When Its Value Is Read
         file.UserName             ??= new ();
         file.Password             ??= new ();
         file.Instances            ??= new ();

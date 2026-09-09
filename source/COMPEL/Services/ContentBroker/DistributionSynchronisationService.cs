@@ -39,7 +39,8 @@ public sealed class DistributionSynchronisationService : BackgroundService
         InstallationDirectory = ResolveInstallationDirectory(this.options.InstallationDirectory);
     }
 
-    // The Distribution Installs Alongside The COMPEL Executable By Default (An Empty Configured Directory), So It Sits Beside The Binary Rather Than In A Peer Folder. A Relative Path Is Resolved Against The Executable's Directory, And A Fully Qualified Path Is Honoured As-Is.
+    // The Distribution Installs Alongside The COMPEL Executable By Default (An Empty Configured Directory), So It Sits Beside The Binary Rather Than In A Peer Folder
+    // A Relative Path Is Resolved Against The Executable's Directory, And A Fully Qualified Path Is Honoured As-Is
     public static string ResolveInstallationDirectory(string configured)
     {
         if (string.IsNullOrWhiteSpace(configured))

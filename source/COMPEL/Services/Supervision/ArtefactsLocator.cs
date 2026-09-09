@@ -7,10 +7,10 @@ namespace COMPEL.Services.Supervision;
 /// </summary>
 public sealed class ArtefactsLocator
 {
-    // The Leaf Beneath The Documents Folder Is Determined By Heroes Of Newerth Itself; COMPEL Only Controls The Home Directory The Tree Hangs From (On Windows).
+    // The Leaf Beneath The Documents Folder Is Determined By Heroes Of Newerth Itself; COMPEL Only Controls The Home Directory The Tree Hangs From (On Windows)
     private const string HeroesOfNewerthDirectoryName = "Heroes of Newerth x64";
 
-    // The Linux Server Build Of Heroes Of Newerth Writes Its Runtime Artefacts Beneath This Fixed Directory, Ignoring The Home Directory, So The Home Redirect And The Configured Runtime Artefacts Path Have No Effect On Linux.
+    // The Linux Server Build Of Heroes Of Newerth Writes Its Runtime Artefacts Beneath This Fixed Directory, Ignoring The Home Directory, So The Home Redirect And The Configured Runtime Artefacts Path Have No Effect On Linux
     private const string LinuxServerArtefactsDirectory = "/opt/hon/config";
 
     private readonly MatchServerManagerOptions options;

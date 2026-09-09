@@ -10,7 +10,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
 
     private static readonly string[] SupportedAliases = [ "DEFAULT" ];
 
-    // These Characters Would Corrupt The Manager's "-execute" CVar String: A Double Quote Can Terminate Its Quoted Argument Early, And A Semicolon Is The CVar-Command Separator. A Control Character (For Example A Newline Or Tab) Is Re-Tokenised As Whitespace By The CVar Parser And Silently Truncates The Value, So It Is Rejected Too.
+    // These Characters Would Corrupt The Manager's "-execute" CVar String: A Double Quote Can Terminate Its Quoted Argument Early, And A Semicolon Is The CVar-Command Separator
+    // A Control Character (For Example A Newline Or Tab) Is Re-Tokenised As Whitespace By The CVar Parser And Silently Truncates The Value, So It Is Rejected Too
     private static readonly char[] UnsafeManagerArgumentCharacters = [ '"', ';' ];
 
     public ValidateOptionsResult Validate(string? name, MatchServerManagerOptions options)
@@ -74,7 +75,7 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
             int minimumVoicePort = options.UseProxy ? PortPlan.BaseVoicePort + PortPlan.ProxyPublicOffset : PortPlan.BaseVoicePort;
             int maximumVoicePort = minimumVoicePort + PortPlan.PortRangeWindow;
 
-            // "- 1" Matches "PortPlan.LocalGameEnd"/"LocalVoiceEnd", Whose Highest Port Is "Start + Instances - 1", Not "Start + Instances".
+            // "- 1" Matches "PortPlan.LocalGameEnd"/"LocalVoiceEnd", Whose Highest Port Is "Start + Instances - 1", Not "Start + Instances"
             if (minimumGamePort + options.PortRangeOffset + options.Instances - 1 > maximumGamePort || minimumVoicePort + options.PortRangeOffset + options.Instances - 1 > maximumVoicePort)
                 failures.Add($@"A Port Range Offset Of {options.PortRangeOffset} Causes Ports For {options.Instances} Instance(s) To Bleed Outside Of The Allowed Port Range");
         }

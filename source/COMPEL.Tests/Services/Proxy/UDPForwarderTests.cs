@@ -16,7 +16,7 @@ public sealed class UDPForwarderTests
         int publicPort = FreeUDPPort();
         int localPort = FreeUDPPort();
 
-        // The Server The Forwarder Relays To.
+        // The Server The Forwarder Relays To
         using Socket server = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         server.Bind(new IPEndPoint(IPAddress.Loopback, localPort));
 
@@ -38,7 +38,8 @@ public sealed class UDPForwarderTests
             bool relayedToClient = false;
             bool challenged = false;
 
-            // Loopback UDP Can Occasionally Drop A Datagram, So The Exchange Is Retried; Each Attempt Only Needs To Observe The Behaviours Not Already Seen. Forcing A Challenge After The Session Exists Recovers A Dropped Initial Challenge.
+            // Loopback UDP Can Occasionally Drop A Datagram, So The Exchange Is Retried; Each Attempt Only Needs To Observe The Behaviours Not Already Seen
+            // Forcing A Challenge After The Session Exists Recovers A Dropped Initial Challenge
             for (int attempt = 0; attempt < 4 && (relayedToServer is false || relayedToClient is false || challenged is false); attempt++)
             {
                 await client.SendToAsync(hello, SocketFlags.None, publicEndPoint);
@@ -101,10 +102,10 @@ public sealed class UDPForwarderTests
             using Socket client = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-            // Establishing A Session Triggers The Initial Challenge.
+            // Establishing A Session Triggers The Initial Challenge
             await client.SendToAsync(Encoding.UTF8.GetBytes("HELLO"), SocketFlags.None, new IPEndPoint(IPAddress.Loopback, publicPort));
 
-            // Flush Any Challenges Buffered From Session Creation So The Two Values Compared Below Are Read In Issue Order.
+            // Flush Any Challenges Buffered From Session Creation So The Two Values Compared Below Are Read In Issue Order
             await DrainUntilIdle(client);
 
             forwarder.ChallengeActiveSessions();
@@ -142,7 +143,7 @@ public sealed class UDPForwarderTests
             if (datagram is not null && IsChallenge(datagram.Value.Payload))
                 return ChallengeValue(datagram.Value.Payload);
 
-            // Nothing Usable Arrived (Idle Timeout Or A Dropped Challenge); Re-Issue And Try Again.
+            // Nothing Usable Arrived (Idle Timeout Or A Dropped Challenge); Re-Issue And Try Again
             forwarder.ChallengeActiveSessions();
         }
 

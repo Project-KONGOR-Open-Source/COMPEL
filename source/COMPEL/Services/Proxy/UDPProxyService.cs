@@ -4,12 +4,14 @@ namespace COMPEL.Services.Proxy;
 ///     The managed, cross-platform proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
 ///     Heroes Of Newerth clients throttle their own traffic on the public port range until the proxy authenticates them, so each forwarder issues a challenge to every session on creation and this service renews those challenges periodically.
 /// </summary>
-// TODO: This proxy performs the transport, port remapping, and client authentication only. It does NOT detect cheaters or ban anyone: the native proxy's detection heuristics lived in a closed binary and are not reproduced, and the previous firewall/ban-list mechanism was removed as ineffective. A future redesign is expected to introduce a different enforcement approach (likely not a static ban list), at which point a hook to drop or block traffic per source can be reintroduced.
+// TODO: This proxy performs the transport, port remapping, and client authentication only
+// It does NOT detect cheaters or ban anyone: the native proxy's detection heuristics lived in a closed binary and are not reproduced, and the previous firewall/ban-list mechanism was removed as ineffective
+// A future redesign is expected to introduce a different enforcement approach (likely not a static ban list), at which point a hook to drop or block traffic per source can be reintroduced
 public sealed class UDPProxyService : BackgroundService
 {
     private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
 
-    // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals.
+    // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
     private static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
 
     private readonly MatchServerManagerOptions options;
@@ -18,7 +20,7 @@ public sealed class UDPProxyService : BackgroundService
 
     private readonly List<UDPForwarder> forwarders = new ();
 
-    // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports.
+    // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
 
     private volatile bool running;
