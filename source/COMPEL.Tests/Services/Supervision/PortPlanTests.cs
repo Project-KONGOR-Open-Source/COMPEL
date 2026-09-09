@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
 ///     Verifies the port arithmetic that the supervisor, proxy, and ping responder all depend on.

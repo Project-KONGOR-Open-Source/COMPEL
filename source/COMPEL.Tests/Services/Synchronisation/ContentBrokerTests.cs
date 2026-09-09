@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Synchronisation;
 
 /// <summary>
 ///     Verifies the synchronisation engine's local reconciliation behaviour: up-front partial cleanup, mirror deletion, target exclusions, and up-to-date detection.

@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
 ///     Verifies the command line built for the Heroes Of Newerth manager: the flag set the legacy COMPEL relied on, the new re-authentication frequency, and the quoting the "-execute" payload requires to survive on both platforms.

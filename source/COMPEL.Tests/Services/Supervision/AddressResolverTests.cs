@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
 ///     Verifies the gateway-to-address logic and the master server endpoint derivation, for the branches that do not require network access.

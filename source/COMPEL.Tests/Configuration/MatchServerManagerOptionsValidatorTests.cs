@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Configuration;
 
 /// <summary>
 ///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the supported locations and artefacts-path alias, and the port-range-offset boundary.

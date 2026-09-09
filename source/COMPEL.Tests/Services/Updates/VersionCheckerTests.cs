@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Updates;
 
 /// <summary>
 ///     Verifies the version-string parsing used by the self-update version check.

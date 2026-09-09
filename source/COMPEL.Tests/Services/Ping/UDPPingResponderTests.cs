@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Ping;
 
 /// <summary>
 ///     Verifies the byte layout of the master-server pong template: the unreliable flag and pong message type at their fixed offsets, and the server name and version at the offsets the client expects.

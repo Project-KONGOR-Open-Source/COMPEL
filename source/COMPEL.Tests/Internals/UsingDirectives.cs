@@ -1,7 +1,5 @@
-global using COMPEL;
 global using COMPEL.Configuration;
 global using COMPEL.Constants;
-global using COMPEL.Endpoints;
 global using COMPEL.Services.ContentBroker;
 global using COMPEL.Services.Deployment;
 global using COMPEL.Services.Maintenance;

@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Deployment;
 
 /// <summary>
 ///     Verifies the foreign-entry enumeration and the display capping used by the location guard.

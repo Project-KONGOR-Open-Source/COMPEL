@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
 ///     Exercises the proxy forwarder over loopback: that datagrams are relayed to the server and back, that a client is issued a challenge, and that each renewal carries a strictly greater value.

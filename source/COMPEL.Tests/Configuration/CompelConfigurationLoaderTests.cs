@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Configuration;
 
 /// <summary>
 ///     Verifies that the configuration file round-trips its values, tolerates a null setting by falling back to its default, and reports malformed JSON as a clean error.

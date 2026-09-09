@@ -1,4 +1,4 @@
-namespace COMPEL.Tests;
+namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
 ///     Verifies where the artefacts locator resolves the child process's profile and artefacts directories on each platform.
