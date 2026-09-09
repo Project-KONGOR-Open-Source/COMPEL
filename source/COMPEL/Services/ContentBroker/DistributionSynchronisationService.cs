@@ -102,6 +102,10 @@ public sealed class DistributionSynchronisationService : BackgroundService
                 if (summary.FilesFailed is 0 && File.Exists(ManagerExecutablePath))
                     break;
 
+                // With No Failed Files The Only Reason Left To Retry Is A Distribution That Does Not Contain The Manager Executable, Which The Per-File Lines Cannot Show
+                if (summary.FilesFailed is 0)
+                    logger.LogWarning(@"FAIL: The Manager Executable ""{Executable}"" Is Not Part Of The Synchronised Distribution", ManagerExecutablePath);
+
                 logger.LogWarning("Retrying Synchronisation In {Seconds} Seconds", RetryDelay.TotalSeconds);
             }
 
@@ -172,7 +176,13 @@ public sealed class DistributionSynchronisationService : BackgroundService
             SynchronisationState = summary.FilesFailed is 0 ? "Up To Date" : $"Completed With {summary.FilesFailed} Failure(s)";
 
             if (summary.FilesFailed > 0)
+            {
                 logger.LogWarning("FAIL: {Failures} File(s) Failed To Be Transferred", summary.FilesFailed);
+
+                // The Lock Scan Is Diagnostic Only, So A Failure Inside It Must Not Turn A Partial Synchronisation Into An Exception That The Start-Up Loop Treats As A Reason To Proceed With The Existing Distribution
+                try { LogLockingProcesses(summary.Failures); }
+                catch (Exception exception) { logger.LogWarning("FAIL: The Lock Scan Failed :: {ExceptionType} :: {Message}", exception.GetType().Name, exception.Message); }
+            }
 
             // Release Consumers Only Once Every File Transferred And The Manager Executable Is Present; A Synchronisation That Failed To Fetch Some Files Would Leave A Mixed-Version Tree, So The Manager Must Not Be Launched Against It
             if (summary.FilesFailed is 0 && File.Exists(ManagerExecutablePath))
@@ -183,9 +193,10 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
         catch (HttpRequestException exception)
         {
+            // A DNS, Connection, Or TLS Failure Carries No HTTP Status, So The Exception Message Is Appended In That Case To Keep The Cause In The Log
             string statusCode = exception.StatusCode is not null
                 ? $"{(int) exception.StatusCode} ({exception.StatusCode})"
-                : "Unknown Status Code";
+                : $"Unknown Status Code :: {exception.Message}";
 
             logger.LogError("FAIL: CDN Unreachable :: HTTP {StatusCode}", statusCode);
 
@@ -240,6 +251,99 @@ public sealed class DistributionSynchronisationService : BackgroundService
                 logger.LogInformation("DONE: {Summary}", synchronisationEvent.Detail);
                 break;
         }
+    }
+
+    // The Launcher Shows The Processes Holding Failed Files In A Dialog Grouped By Application; The Console Equivalent Is One Line Per Application Naming The Files It Holds
+    private void LogLockingProcesses(IReadOnlyList<SynchronisationFailure> failures)
+    {
+        const string unidentifiedProcessGroup = "Unidentified Process";
+
+        Dictionary<string, LockGroup> groups = new (StringComparer.OrdinalIgnoreCase);
+
+        LockGroup GroupFor(string applicationName)
+        {
+            if (groups.TryGetValue(applicationName, out LockGroup? group) is false)
+            {
+                group = new LockGroup();
+
+                groups.Add(applicationName, group);
+            }
+
+            return group;
+        }
+
+        foreach (SynchronisationFailure failure in failures)
+        {
+            string absolutePath = Path.IsPathRooted(failure.Path)
+                ? failure.Path
+                : Path.GetFullPath(Path.Combine(InstallationDirectory, failure.Path));
+
+            if (File.Exists(absolutePath) is false)
+                continue;
+
+            string displayPath = Path.GetRelativePath(InstallationDirectory, absolutePath);
+
+            List<FileLockingProcess> lockingProcesses = FileLockDetector.GetLockingProcesses(absolutePath);
+
+            if (lockingProcesses.Count is 0)
+            {
+                // No Locking Process Was Identified, So The File Is Only Surfaced When It Is Genuinely Still Locked; This Filters Out Failures Caused By Other Reasons (Such As A Hash Mismatch Or An Unreachable CDN) While Still Reporting A Lock Whose Owner Could Not Be Determined
+                if (FileIsLocked(absolutePath))
+                    GroupFor(unidentifiedProcessGroup).FilePaths.Add(displayPath);
+
+                continue;
+            }
+
+            foreach (FileLockingProcess lockingProcess in lockingProcesses)
+            {
+                // Every Instance Of The Same Executable Is Collapsed Into One Group Keyed By Its Application Name; Its Distinct Process IDs Are Counted So The Operator Knows How Many Instances Need To Be Closed
+                LockGroup group = GroupFor(lockingProcess.ApplicationName);
+
+                group.ProcessIDs.Add(lockingProcess.ProcessID);
+                group.FilePaths.Add(displayPath);
+            }
+        }
+
+        foreach ((string applicationName, LockGroup group) in groups)
+        {
+            string processName = group.ProcessIDs.Count > 1
+                ? $"{applicationName} ({group.ProcessIDs.Count} Processes)"
+                : applicationName;
+
+            logger.LogWarning("FAIL: {ProcessName} Holds {Files}", processName, string.Join(", ", group.FilePaths));
+        }
+    }
+
+    private static bool FileIsLocked(string path)
+    {
+        try
+        {
+            // Opening With No Sharing Fails When Any Other Handle To The File Is Already Open, Which Is The Defining Symptom Of A Lock Held By Another Process; Read Access Is Requested So The Read-Only Attribute Does Not Interfere
+            using FileStream stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None);
+
+            return false;
+        }
+
+        catch (IOException)
+        {
+            return true;
+        }
+
+        catch
+        {
+            // Swallowed Deliberately: An Inability To Open The File For Reasons Other Than Sharing (Such As Insufficient Permissions) Must Not Be Misreported As A Lock
+            return false;
+        }
+    }
+
+    /// <summary>
+    ///     Accumulates the distinct locking process IDs and the locked file paths for a single application while the locking processes are being scanned.
+    /// </summary>
+    private sealed class LockGroup
+    {
+        public HashSet<int> ProcessIDs { get; } = [];
+
+        public HashSet<string> FilePaths { get; } = new (StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
