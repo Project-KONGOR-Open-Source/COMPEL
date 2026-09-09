@@ -5,5 +5,5 @@ namespace COMPEL.Serialisation;
 ///     Required because the application is published with Native AOT, which strips the reflection-based <see cref="JsonSerializer"/> paths.
 ///     Default (PascalCase) property naming is used so the file's keys read as "UserName", "Value", "Description", and so on.
 /// </summary>
-[JsonSerializable(typeof(CompelConfigurationFile))]
-internal sealed partial class CompelConfigurationJSONContext : JsonSerializerContext;
+[JsonSerializable(typeof(ConfigurationFile))]
+internal sealed partial class ConfigurationJSONContext : JsonSerializerContext;

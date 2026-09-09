@@ -4,7 +4,7 @@ namespace COMPEL.Configuration;
 ///     The on-disk representation of "COMPEL.json": a single, self-describing configuration file in the format used by the legacy COMPEL.
 ///     Each setting carries its <c>Value</c> and a human-readable <c>Description</c>. The descriptions are written to the file when it is generated and ignored when it is read back, so they document the file without affecting how it binds.
 /// </summary>
-public sealed class CompelConfigurationFile
+public sealed class ConfigurationFile
 {
     public UserNameSetting UserName { get; set; } = new ();
     public PasswordSetting Password { get; set; } = new ();

@@ -3,7 +3,7 @@ namespace COMPEL.Tests.Configuration;
 /// <summary>
 ///     Verifies that the configuration file round-trips its values, tolerates a null setting by falling back to its default, and reports malformed JSON as a clean error.
 /// </summary>
-public sealed class CompelConfigurationLoaderTests
+public sealed class ConfigurationLoaderTests
 {
     private static string TemporaryPath() => Path.Combine(Path.GetTempPath(), $"compel-configuration-{Guid.NewGuid():N}.json");
 
@@ -14,9 +14,9 @@ public sealed class CompelConfigurationLoaderTests
 
         try
         {
-            CompelConfigurationLoader.CreateDefault(path);
+            ConfigurationLoader.CreateDefault(path);
 
-            CompelConfigurationFile file = CompelConfigurationLoader.Load(path);
+            ConfigurationFile file = ConfigurationLoader.Load(path);
 
             using (Assert.Multiple())
             {
@@ -43,7 +43,7 @@ public sealed class CompelConfigurationLoaderTests
         {
             File.WriteAllText(path, """{ "UserName": null }""");
 
-            CompelConfigurationFile file = CompelConfigurationLoader.Load(path);
+            ConfigurationFile file = ConfigurationLoader.Load(path);
 
             using (Assert.Multiple())
             {
@@ -71,7 +71,7 @@ public sealed class CompelConfigurationLoaderTests
 
             try
             {
-                CompelConfigurationLoader.Load(path);
+                ConfigurationLoader.Load(path);
             }
 
             catch (InvalidOperationException)
@@ -97,7 +97,7 @@ public sealed class CompelConfigurationLoaderTests
 
         try
         {
-            CompelConfigurationLoader.Load(path);
+            ConfigurationLoader.Load(path);
         }
 
         catch (InvalidOperationException exception)

@@ -3,12 +3,12 @@ namespace COMPEL.Configuration;
 /// <summary>
 ///     Loads, and on first run generates, the single self-describing "COMPEL.json" configuration file that sits alongside the executable.
 /// </summary>
-public static class CompelConfigurationLoader
+public static class ConfigurationLoader
 {
     private const string FileName = DeploymentManifest.ConfigurationFileName;
 
     // A Dedicated Context Whose Options Indent The Output And Avoid Escaping Apostrophes And Slashes In The Descriptions, So The Generated File Reads Cleanly
-    private static readonly CompelConfigurationJSONContext WriteContext = new (new JsonSerializerOptions
+    private static readonly ConfigurationJSONContext WriteContext = new (new JsonSerializerOptions
     {
         WriteIndented = true,
         IndentSize = 4,
@@ -26,7 +26,7 @@ public static class CompelConfigurationLoader
 
     internal static void CreateDefault(string path)
     {
-        string serialised = JsonSerializer.Serialize(new CompelConfigurationFile(), WriteContext.CompelConfigurationFile);
+        string serialised = JsonSerializer.Serialize(new ConfigurationFile(), WriteContext.ConfigurationFile);
 
         File.WriteAllText(path, serialised);
     }
@@ -37,9 +37,9 @@ public static class CompelConfigurationLoader
     /// <exception cref="InvalidOperationException">
     ///     Thrown with a message naming the problem when "COMPEL.json" cannot be read, is not valid JSON, or does not match the expected shape (for example a string where a number is expected), rather than letting a raw <see cref="IOException"/> or <see cref="JsonException"/> propagate.
     /// </exception>
-    public static CompelConfigurationFile Load() => Load(ResolvePath());
+    public static ConfigurationFile Load() => Load(ResolvePath());
 
-    internal static CompelConfigurationFile Load(string path)
+    internal static ConfigurationFile Load(string path)
     {
         string json;
 
@@ -53,11 +53,11 @@ public static class CompelConfigurationLoader
             throw new InvalidOperationException($@"""COMPEL.json"" Could Not Be Read: {exception.Message}", exception);
         }
 
-        CompelConfigurationFile file;
+        ConfigurationFile file;
 
         try
         {
-            file = JsonSerializer.Deserialize(json, CompelConfigurationJSONContext.Default.CompelConfigurationFile) ?? throw new InvalidOperationException(@"""COMPEL.json"" Deserialised To NULL");
+            file = JsonSerializer.Deserialize(json, ConfigurationJSONContext.Default.ConfigurationFile) ?? throw new InvalidOperationException(@"""COMPEL.json"" Deserialised To NULL");
         }
 
         catch (JsonException exception)

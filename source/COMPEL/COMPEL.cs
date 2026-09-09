@@ -1,10 +1,10 @@
 // Configuration Is A Single Self-Describing "COMPEL.json" File Beside The Executable; On First Run It Is Created With Defaults And The Process Stops So The Operator Can Configure It
 // This Path Runs Before The Logger Exists Because The Release Workflow Runs The Published Binary Once To Generate The Shipped Configuration File And Fails If Anything Else Is Left Behind
-if (CompelConfigurationLoader.Exists() is false)
+if (ConfigurationLoader.Exists() is false)
 {
-    CompelConfigurationLoader.CreateDefault();
+    ConfigurationLoader.CreateDefault();
 
-    Console.WriteLine($@"Created A Default Configuration File At ""{CompelConfigurationLoader.ResolvePath()}""; Set At Least ""UserName"" And ""Password"", Then Start COMPEL Again");
+    Console.WriteLine($@"Created A Default Configuration File At ""{ConfigurationLoader.ResolvePath()}""; Set At Least ""UserName"" And ""Password"", Then Start COMPEL Again");
 
     return;
 }
@@ -26,17 +26,17 @@ catch (Exception exception) when (exception is IOException or UnauthorizedAccess
     return;
 }
 
-CompelConfigurationFile configuration;
+ConfigurationFile configuration;
 
 try
 {
-    configuration = CompelConfigurationLoader.Load();
+    configuration = ConfigurationLoader.Load();
 }
 
 catch (InvalidOperationException exception)
 {
     logger.Log(LogCategory.Initialise, exception.Message);
-    logger.Log(LogCategory.Initialise, $@"Fix Or Delete ""{CompelConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
+    logger.Log(LogCategory.Initialise, $@"Fix Or Delete ""{ConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
 
     return;
 }
@@ -61,7 +61,7 @@ if (locationSafety.Verdict is LocationSafetyVerdict.Unsafe)
 if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 {
     logger.Log(LogCategory.Initialise, $"The Configured Control Plane Port ({configuration.ControlPlanePort.Value}) Is Invalid; It Must Be Between 1 And 65535");
-    logger.Log(LogCategory.Initialise, $@"Fix ""{CompelConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
+    logger.Log(LogCategory.Initialise, $@"Fix ""{ConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
 
     return;
 }
@@ -197,7 +197,7 @@ catch (OptionsValidationException exception)
     foreach (string failure in exception.Failures)
         logger.Log(LogCategory.Initialise, $"    - {failure}");
 
-    logger.Log(LogCategory.Initialise, $@"Fix ""{CompelConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
+    logger.Log(LogCategory.Initialise, $@"Fix ""{ConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
 
     return;
 }
