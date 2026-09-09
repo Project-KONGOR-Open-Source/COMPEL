@@ -139,20 +139,20 @@ public static partial class VersionChecker
     public static void ApplyUpdateAndRestart(string archivePath)
     {
         string targetDirectory = AppContext.BaseDirectory;
-        string tempDirectory = Path.Combine(Path.GetTempPath(), DeploymentManifest.UpdateExtractDirectoryName);
+        string temporaryDirectory = Path.Combine(Path.GetTempPath(), DeploymentManifest.UpdateExtractDirectoryName);
 
-        if (Directory.Exists(tempDirectory))
-            Directory.Delete(tempDirectory, recursive: true);
+        if (Directory.Exists(temporaryDirectory))
+            Directory.Delete(temporaryDirectory, recursive: true);
 
-        ZipFile.ExtractToDirectory(archivePath, tempDirectory);
+        ZipFile.ExtractToDirectory(archivePath, temporaryDirectory);
 
-        string[] topLevelEntries = Directory.GetFileSystemEntries(tempDirectory);
+        string[] topLevelEntries = Directory.GetFileSystemEntries(temporaryDirectory);
 
         if (topLevelEntries.Length is 1 && Directory.Exists(topLevelEntries[0]))
-            tempDirectory = topLevelEntries[0];
+            temporaryDirectory = topLevelEntries[0];
 
         // The Release Archive Ships A Default Configuration File; It Is Removed From The Extracted Payload So The Update Neither Deletes Nor Overwrites The Operator's Live Configuration
-        string shippedConfigurationFilePath = Path.Combine(tempDirectory, DeploymentManifest.ConfigurationFileName);
+        string shippedConfigurationFilePath = Path.Combine(temporaryDirectory, DeploymentManifest.ConfigurationFileName);
 
         if (File.Exists(shippedConfigurationFilePath))
             File.Delete(shippedConfigurationFilePath);
@@ -161,15 +161,15 @@ public static partial class VersionChecker
 
         // Enumerate The Files The New Release Ships So The Update Script Can Force-Delete Each Pre-Existing Counterpart (Including Read-Only Ones) Before Copying The New Files Into Place
         string[] relativePathsToReplace = Directory
-            .EnumerateFiles(tempDirectory, "*", SearchOption.AllDirectories)
-            .Select(absolutePath => Path.GetRelativePath(tempDirectory, absolutePath))
+            .EnumerateFiles(temporaryDirectory, "*", SearchOption.AllDirectories)
+            .Select(absolutePath => Path.GetRelativePath(temporaryDirectory, absolutePath))
             .ToArray();
 
         if (OperatingSystem.IsWindows())
-            SpawnWindowsUpdateScript(archivePath, tempDirectory, targetDirectory, executablePath, relativePathsToReplace);
+            SpawnWindowsUpdateScript(archivePath, temporaryDirectory, targetDirectory, executablePath, relativePathsToReplace);
 
         else
-            SpawnLinuxUpdateScript(archivePath, tempDirectory, targetDirectory, executablePath, relativePathsToReplace);
+            SpawnLinuxUpdateScript(archivePath, temporaryDirectory, targetDirectory, executablePath, relativePathsToReplace);
 
         Environment.Exit(0);
     }

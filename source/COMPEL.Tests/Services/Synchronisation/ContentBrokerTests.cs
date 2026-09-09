@@ -55,7 +55,8 @@ public sealed class ContentBrokerTests
                 await Assert.That(File.Exists(partialPath)).IsFalse();
                 await Assert.That(deletedIndex).IsGreaterThanOrEqualTo(0);
                 await Assert.That(deletedIndex).IsLessThan(planIndex);
-                await Assert.That(recorder.Events[planIndex].Plan!.FilesToDelete).IsEqualTo(1);
+                await Assert.That(recorder.Events[planIndex].Plan).IsNotNull();
+                await Assert.That(recorder.Events[planIndex].Plan?.FilesToDelete).IsEqualTo(1);
                 await Assert.That(summary.FilesDeleted).IsEqualTo(1);
                 await Assert.That(summary.FilesFailed).IsEqualTo(0);
             }
