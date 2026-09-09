@@ -87,4 +87,24 @@ public sealed class CompelConfigurationLoaderTests
             File.Delete(path);
         }
     }
+
+    [Test]
+    public async Task An_Unreadable_File_Is_Reported_As_An_Invalid_Operation_Rather_Than_A_Raw_IO_Error()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"compel-configuration-{Guid.NewGuid():N}", "COMPEL.json");
+
+        bool threw = false;
+
+        try
+        {
+            CompelConfigurationLoader.Load(path);
+        }
+
+        catch (InvalidOperationException)
+        {
+            threw = true;
+        }
+
+        await Assert.That(threw).IsTrue();
+    }
 }

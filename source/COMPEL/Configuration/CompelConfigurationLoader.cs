@@ -35,13 +35,23 @@ public static class CompelConfigurationLoader
     ///     Reads and deserialises "COMPEL.json". Settings absent from the file fall back to their defaults.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    ///     Thrown with a message naming the problem when "COMPEL.json" is not valid JSON, or does not match the expected shape (for example a string where a number is expected), rather than letting a raw <see cref="JsonException"/> propagate.
+    ///     Thrown with a message naming the problem when "COMPEL.json" cannot be read, is not valid JSON, or does not match the expected shape (for example a string where a number is expected), rather than letting a raw <see cref="IOException"/> or <see cref="JsonException"/> propagate.
     /// </exception>
     public static CompelConfigurationFile Load() => Load(ResolvePath());
 
     internal static CompelConfigurationFile Load(string path)
     {
-        string json = File.ReadAllText(path);
+        string json;
+
+        try
+        {
+            json = File.ReadAllText(path);
+        }
+
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException($@"""COMPEL.json"" Could Not Be Read: {exception.Message}", exception);
+        }
 
         CompelConfigurationFile file;
 
