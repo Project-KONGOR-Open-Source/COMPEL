@@ -1,4 +1,4 @@
-namespace COMPEL.Services;
+namespace COMPEL.Services.Updates;
 
 /// <summary>
 ///     Provides version checking against GitHub releases, asset downloading, and self-update capabilities.

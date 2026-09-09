@@ -1,4 +1,4 @@
-namespace COMPEL.Services;
+namespace COMPEL.Services.Deployment;
 
 /// <summary>
 ///     Refuses to launch COMPEL from a directory whose contents do not match either an existing Heroes Of Newerth match server installation or a fresh COMPEL-only deployment.

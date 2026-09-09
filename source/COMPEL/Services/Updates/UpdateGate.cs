@@ -1,4 +1,4 @@
-namespace COMPEL.Services;
+namespace COMPEL.Services.Updates;
 
 /// <summary>
 ///     Checks for a newer COMPEL release before the host starts, and offers to self-update when the console is interactive.

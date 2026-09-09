@@ -1,4 +1,4 @@
-namespace COMPEL;
+namespace COMPEL.Services.Deployment;
 
 /// <summary>
 ///     Ensures that only one COMPEL process runs against a given installation at a time, using an exclusively-held lock file that the operating system releases automatically when the process exits, even on a crash.

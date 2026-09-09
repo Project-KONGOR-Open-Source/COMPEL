@@ -1,4 +1,4 @@
-namespace COMPEL.Services;
+namespace COMPEL.Services.Deployment;
 
 /// <summary>
 ///     Single source of truth for product-name string literals, deployment file naming conventions, and the platform-specific executable name that COMPEL ships as.

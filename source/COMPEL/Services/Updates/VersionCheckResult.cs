@@ -1,4 +1,4 @@
-namespace COMPEL.Services;
+namespace COMPEL.Services.Updates;
 
 /// <summary>
 ///     Represents the result of a version check against the GitHub releases API.

@@ -1,4 +1,4 @@
-namespace COMPEL.Services;
+namespace COMPEL.Services.Deployment;
 
 /// <summary>
 ///     Classifies the directory the application is running from according to whether it is a suitable place to perform operations that modify its contents.
