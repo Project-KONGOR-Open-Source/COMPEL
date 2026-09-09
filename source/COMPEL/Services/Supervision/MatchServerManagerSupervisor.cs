@@ -86,7 +86,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         LogPortAllocation();
 
-        // When The Proxy Is Enabled The Manager Advertises Public Ports (Local + 10000) That Only Work If The Proxy Bound Them
+        // When The Proxy Is Enabled The Manager Advertises Public Ports (The Local Ports Raised By "PortPlan.ProxyPublicOffset") That Only Work If The Proxy Bound Them
         // If No Forwarder Could Bind, Launching The Manager Would Register Unreachable Public Ports With The Master Server, So The Launch Is Refused Instead
         if (options.UseProxy)
         {

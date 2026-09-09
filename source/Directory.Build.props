@@ -21,7 +21,7 @@
 
     <PropertyGroup Condition="'$(Configuration)' != 'Release'">
         <!--
-            Define the "DEVELOPMENT" symbol for every configuration except "Release", so the code can distinguish a development build from a release build.
+            Define The "DEVELOPMENT" Symbol For Every Configuration Except "Release", So The Code Can Distinguish A Development Build From A Release Build
         -->
 
         <DefineConstants>$(DefineConstants);DEVELOPMENT</DefineConstants>

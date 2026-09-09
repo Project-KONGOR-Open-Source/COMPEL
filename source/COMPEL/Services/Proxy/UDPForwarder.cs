@@ -9,10 +9,10 @@ internal sealed class UDPForwarder : IDisposable
 {
     private const int DatagramBufferSize = 65535;
 
-    // The Challenge Packet's Leading Watermark Bytes, Which The Client Skips Before Reading The Control Payload: WATERMARK_LEN_TOTAL (20) Plus ENHANCED_WATERMARK_LEN_TOTAL (20)
+    // The Challenge Packet's Leading Watermark Bytes, Which The Client Skips Before Reading The Control Payload: "WATERMARK_LEN_TOTAL" Plus "ENHANCED_WATERMARK_LEN_TOTAL"
     private const int WatermarkPrefixLength = 40;
 
-    // Identifies A Proxy Control Packet (PACKET_PROXY, Bit 6) And The Challenge Sub-Type Within It
+    // Identifies A Proxy Control Packet ("PACKET_PROXY", Bit 6) And The Challenge Sub-Type Within It
     private const byte ProxyPacketFlag = 0x40;
     private const byte ChallengePacketType = 0x00;
 

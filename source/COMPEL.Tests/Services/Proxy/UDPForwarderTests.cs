@@ -16,7 +16,6 @@ public sealed class UDPForwarderTests
         int publicPort = FreeUDPPort();
         int localPort = FreeUDPPort();
 
-        // The Server The Forwarder Relays To
         using Socket server = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         server.Bind(new IPEndPoint(IPAddress.Loopback, localPort));
 

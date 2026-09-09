@@ -1,12 +1,12 @@
 namespace COMPEL.Services.Proxy;
 
+// TODO: This Proxy Performs The Transport, Port Remapping, And Client Authentication Only; It Does Not Detect Cheaters Or Ban Anyone
+// The Native Proxy's Detection Heuristics Lived In A Closed Binary And Are Not Reproduced, And The Previous Firewall And Ban-List Mechanism Was Removed As Ineffective
+// A Future Redesign Is Expected To Introduce A Different Enforcement Approach, Likely Not A Static Ban List, At Which Point A Hook To Drop Or Block Traffic Per Source Can Be Reintroduced
 /// <summary>
 ///     The managed, cross-platform proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
 ///     Heroes Of Newerth clients throttle their own traffic on the public port range until the proxy authenticates them, so each forwarder issues a challenge to every session on creation and this service renews those challenges periodically.
 /// </summary>
-// TODO: This proxy performs the transport, port remapping, and client authentication only
-// It does NOT detect cheaters or ban anyone: the native proxy's detection heuristics lived in a closed binary and are not reproduced, and the previous firewall/ban-list mechanism was removed as ineffective
-// A future redesign is expected to introduce a different enforcement approach (likely not a static ban list), at which point a hook to drop or block traffic per source can be reintroduced
 public sealed class UDPProxyService : BackgroundService
 {
     private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);

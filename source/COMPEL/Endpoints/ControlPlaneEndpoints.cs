@@ -9,7 +9,6 @@ public static class ControlPlaneEndpoints
     {
         long startTicks = Environment.TickCount64;
 
-        // Anonymous Latency Probe
         application.MapGet("/ping", () => TypedResults.Ok(new PingResponse("COMPEL", GeneratedVersionInformation.VersionString, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
         RouteGroupBuilder management = application.MapGroup(string.Empty);
