@@ -29,9 +29,6 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
     private volatile bool synchronising;
 
-    private long announcedTotalBytes;
-    private long lastProgressLogTicks;
-
     public DistributionSynchronisationService(IOptions<CDNOptions> options, ILogger<DistributionSynchronisationService> logger)
     {
         this.options = options.Value;
@@ -65,10 +62,10 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // The Initial Synchronisation Can Be Disabled For Development And Testing: The Existing Local Distribution Is Used, And On-Demand Synchronisation Via The Control Plane Still Works.
+        // The Initial Synchronisation Can Be Disabled For Development And Testing; The Existing Local Distribution Is Used, And On-Demand Synchronisation Via The Control Plane Still Works
         if (options.Synchronisation is false)
         {
-            logger.LogInformation("Initial CDN Synchronisation Is Disabled; Proceeding With The Existing Local Distribution");
+            logger.LogInformation("SKIP: Synchronisation Skipped (Manual Override)");
 
             SynchronisationState = "Disabled";
 
@@ -80,10 +77,10 @@ public sealed class DistributionSynchronisationService : BackgroundService
             return;
         }
 
-        // Mirroring The Launcher's Location Guard, A Development Environment Is Never Synchronised: The Mirror's Deletion Pass Would Otherwise Remove Development Artefacts That Are Not Part Of The Distribution.
+        // Mirroring The Launcher's Location Guard, A Development Environment Is Never Synchronised; The Mirror's Deletion Pass Would Otherwise Remove Development Artefacts That Are Not Part Of The Distribution
         if (LocationGuard.AssessLocationSafety(InstallationDirectory).Verdict is not LocationSafetyVerdict.Safe)
         {
-            logger.LogInformation("CDN Synchronisation Is Skipped (Development Environment); Proceeding With The Existing Local Distribution");
+            logger.LogInformation("SKIP: Synchronisation Skipped (Development Environment)");
 
             SynchronisationState = "Skipped (Development Environment)";
 
@@ -101,11 +98,11 @@ public sealed class DistributionSynchronisationService : BackgroundService
             {
                 SynchronisationSummary summary = await SynchroniseNow(stoppingToken).ConfigureAwait(false);
 
-                // A Synchronisation That Reports No Exception Can Still Have Failed To Fetch Individual Files, Which Would Leave A Mixed-Version Tree; Only Stop Retrying Once Every File Transferred And The Manager Executable Is Present.
+                // A Synchronisation That Reports No Exception Can Still Have Failed To Fetch Individual Files, Which Would Leave A Mixed-Version Tree; Only Stop Retrying Once Every File Transferred And The Manager Executable Is Present
                 if (summary.FilesFailed is 0 && File.Exists(ManagerExecutablePath))
                     break;
 
-                logger.LogWarning("Synchronisation Did Not Fully Complete ({Failures} File(s) Failed); Retrying In {Seconds} Seconds", summary.FilesFailed, RetryDelay.TotalSeconds);
+                logger.LogWarning("Retrying Synchronisation In {Seconds} Seconds", RetryDelay.TotalSeconds);
             }
 
             catch (OperationCanceledException)
@@ -113,11 +110,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
                 return;
             }
 
-            catch (Exception exception)
+            catch (Exception)
             {
-                logger.LogError(exception, "Distribution Synchronisation Failed");
-
-                // If A Previous Synchronisation Already Installed The Manager, Proceed With It Rather Than Blocking The Manager Launch On A Transient CDN Outage.
+                // The Failure Itself Was Logged By "SynchroniseNow"; If A Previous Synchronisation Already Installed The Manager, The Launch Proceeds With It Rather Than Blocking On A Transient CDN Outage
                 if (File.Exists(ManagerExecutablePath))
                 {
                     logger.LogWarning("Proceeding With The Existing Local Distribution At {InstallationDirectory}", InstallationDirectory);
@@ -134,20 +129,21 @@ public sealed class DistributionSynchronisationService : BackgroundService
             catch (OperationCanceledException) { return; }
         }
 
-        // Remain Alive So The Control Plane Can Resolve This Singleton For On-Demand Synchronisations And Status Reporting.
+        // Remain Alive So The Control Plane Can Resolve This Singleton For On-Demand Synchronisations And Status Reporting
         try { await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException) { }
     }
 
     /// <summary>
-    ///     Fetches the manifest and synchronises the installation directory. Safe to call concurrently; calls are serialised.
+    ///     Fetches the manifest and synchronises the installation directory, logging each step in WILLOWMAKER's vocabulary. Safe to call concurrently; calls are serialised.
+    ///     Every failure is logged here before it propagates, so the start-up loop and the control plane only decide what to do next.
     /// </summary>
     public async Task<SynchronisationSummary> SynchroniseNow(CancellationToken cancellationToken)
     {
-        // Mirroring The Startup Path, A Location That Is Not Safe To Mirror Into (A Development Environment) Is Never Synchronised, Including On Demand Via The Control Plane.
+        // Mirroring The Startup Path, A Location That Is Not Safe To Mirror Into (A Development Environment) Is Never Synchronised, Including On Demand Via The Control Plane
         if (LocationGuard.AssessLocationSafety(InstallationDirectory).Verdict is not LocationSafetyVerdict.Safe)
         {
-            logger.LogInformation("Synchronisation Skipped: The Installation Directory Is Not Safe To Mirror Into");
+            logger.LogInformation("SKIP: Synchronisation Skipped (Development Environment)");
 
             return new SynchronisationSummary(0, 0, 0, 0, 0, []);
         }
@@ -160,27 +156,48 @@ public sealed class DistributionSynchronisationService : BackgroundService
         {
             SynchronisationState = "Synchronising";
 
-            logger.LogInformation("Synchronising Match Server Distribution {Variant} From {Host} Into {Directory}", Variant, options.Host, InstallationDirectory);
+            logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN", Variant);
 
             Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, cancellationToken).ConfigureAwait(false);
 
+            logger.LogInformation("INIT: Manifest Version {Version} Lists {Count} File(s)", manifest.Version, manifest.Files.Count);
+
             DistributionVersion = manifest.Version;
 
-            Progress<SynchronisationEvent> progress = new (LogSynchronisationEvent);
+            // Reported Synchronously So The Per-File Lines Land In The Log In The Order The Broker Raises Them, With The Completion Line Last
+            SynchronousProgress<SynchronisationEvent> progress = new (LogSynchronisationEvent);
 
             SynchronisationSummary summary = await ContentBroker.Synchronise(manifest, Variant, InstallationDirectory, options.Host, options.ParallelTransfers, progress, cancellationToken).ConfigureAwait(false);
 
             SynchronisationState = summary.FilesFailed is 0 ? "Up To Date" : $"Completed With {summary.FilesFailed} Failure(s)";
 
-            // Release Consumers Only Once Every File Transferred And The Manager Executable Is Present. A Synchronisation That Failed To Fetch Some Files Would Leave A Mixed-Version Tree, So The Manager Must Not Be Launched Against It.
+            if (summary.FilesFailed > 0)
+                logger.LogWarning("FAIL: {Failures} File(s) Failed To Be Transferred", summary.FilesFailed);
+
+            // Release Consumers Only Once Every File Transferred And The Manager Executable Is Present; A Synchronisation That Failed To Fetch Some Files Would Leave A Mixed-Version Tree, So The Manager Must Not Be Launched Against It
             if (summary.FilesFailed is 0 && File.Exists(ManagerExecutablePath))
                 ready.TrySetResult();
 
             return summary;
         }
 
+        catch (HttpRequestException exception)
+        {
+            string statusCode = exception.StatusCode is not null
+                ? $"{(int) exception.StatusCode} ({exception.StatusCode})"
+                : "Unknown Status Code";
+
+            logger.LogError("FAIL: CDN Unreachable :: HTTP {StatusCode}", statusCode);
+
+            SynchronisationState = "CDN Unreachable; Synchronisation Aborted";
+
+            throw;
+        }
+
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            logger.LogError("FAIL: {ExceptionType} :: {Message}", exception.GetType().Name, exception.Message);
+
             SynchronisationState = $"Failed: {exception.Message}";
 
             throw;
@@ -199,54 +216,30 @@ public sealed class DistributionSynchronisationService : BackgroundService
         switch (synchronisationEvent.Kind)
         {
             case SynchronisationEventKind.PlanReady:
-                announcedTotalBytes = synchronisationEvent.Plan?.TotalBytesToDownload ?? 0;
-                lastProgressLogTicks = 0;
-                logger.LogInformation("Synchronisation Plan: {Plan}", synchronisationEvent.Detail);
-                break;
-
-            case SynchronisationEventKind.ProgressUpdated:
-                LogProgress(synchronisationEvent.Size);
+                logger.LogInformation("PLAN: {Plan}", synchronisationEvent.Detail);
                 break;
 
             case SynchronisationEventKind.Downloaded:
-                logger.LogDebug("Downloaded {Path} ({Size:N0} Bytes)", synchronisationEvent.Detail, synchronisationEvent.Size);
+                logger.LogInformation("PULL: {Path}", synchronisationEvent.Detail);
                 break;
 
             case SynchronisationEventKind.Deleted:
-                logger.LogDebug("Deleted {Path}", synchronisationEvent.Detail);
+                logger.LogInformation("NUKE: {Path}", synchronisationEvent.Detail);
                 break;
 
             case SynchronisationEventKind.Skipped:
-                logger.LogDebug("Skipped {Path}", synchronisationEvent.Detail);
+                logger.LogInformation("SKIP: {Path}", synchronisationEvent.Detail);
                 break;
 
             case SynchronisationEventKind.DownloadFailed:
             case SynchronisationEventKind.DeletionFailed:
-                logger.LogWarning("{Detail}", synchronisationEvent.Detail);
+                logger.LogWarning("FAIL: {Detail}", synchronisationEvent.Detail);
                 break;
 
             case SynchronisationEventKind.Completed:
-                logger.LogInformation("Synchronisation Complete: {Summary}", synchronisationEvent.Detail);
+                logger.LogInformation("DONE: {Summary}", synchronisationEvent.Detail);
                 break;
         }
-    }
-
-    // Logs A Throttled Progress Line During A Long Initial Synchronisation So The Operator Sees Movement Between The Plan And The Completion Lines, Without Flooding The Log.
-    private void LogProgress(long bytesDownloaded)
-    {
-        if (announcedTotalBytes <= 0)
-            return;
-
-        long now = Environment.TickCount64;
-
-        if (lastProgressLogTicks is not 0 && now - lastProgressLogTicks < 10_000)
-            return;
-
-        lastProgressLogTicks = now;
-
-        double percentage = Math.Min(100.0, bytesDownloaded * 100.0 / announcedTotalBytes);
-
-        logger.LogInformation("Synchronising: {Downloaded:N0} Of {Total:N0} Bytes ({Percentage:F0}%)", bytesDownloaded, announcedTotalBytes, percentage);
     }
 
     /// <summary>
