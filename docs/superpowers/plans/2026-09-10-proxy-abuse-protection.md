@@ -1661,21 +1661,23 @@ In `UDPProxyService`, beside the existing fields:
     public bool IsUnderAttack => Volatile.Read(ref isUnderAttack);
 ```
 
-In `RunMaintenanceLoop`, after the `Volatile.Write` of the aggregate from Step 2 — so the window judges a freshly summed count — and alongside the `scoreContainer.Drain();` call added in Task 5, close the window once enough passes have elapsed and judge the refusals counted in it:
+In `RunMaintenanceLoop`, after the `Volatile.Write` of the aggregate from Step 2 — so the window judges a freshly summed count — and alongside the `scoreContainer.Drain();` call added in Task 5, close the window once enough passes have elapsed and judge the refusals counted in it. This reuses Step 2's `droppedDatagrams` local rather than declaring a second one, which would both collide with it in the same scope and volatile-read the value Step 2 has just written from it:
 
 ```csharp
             if (++maintenancePassesThisWindow >= UnderAttackWindowPasses)
             {
                 maintenancePassesThisWindow = 0;
 
-                int droppedDatagrams = DroppedDatagramCount;
+                // The Sum From This Pass Is Reused Rather Than Read Back Through The Property, Which Would Volatile-Read The Value Just Written From It
                 int droppedThisWindow = droppedDatagrams - droppedDatagramsAtWindowStart;
 
                 droppedDatagramsAtWindowStart = droppedDatagrams;
 
-                Volatile.Write(ref isUnderAttack, droppedThisWindow > UnderAttackThreshold);
+                bool underAttack = droppedThisWindow > UnderAttackThreshold;
 
-                if (droppedThisWindow > UnderAttackThreshold)
+                Volatile.Write(ref isUnderAttack, underAttack);
+
+                if (underAttack)
                     logger.LogWarning("The Proxy Refused {DroppedDatagrams} Datagram(s) In The Last Window, Which Exceeds The Under-Attack Threshold Of {Threshold}", droppedThisWindow, UnderAttackThreshold);
             }
 ```
