@@ -7,6 +7,12 @@ namespace COMPEL.Services.ContentBroker;
 /// </summary>
 public sealed class DistributionSynchronisationService : BackgroundService
 {
+    /// <summary>
+    ///     Stands in for the distribution version until it has been resolved from the manifest, which cannot happen while synchronisation is disabled or the CDN is unreachable.
+    ///     It carries the same four full-stop-separated components a real version does, so a consumer that splits the field is not caught out by an absent value, while remaining impossible to mistake for a real version.
+    /// </summary>
+    public const string UnknownDistributionVersion = "?.?.?.?";
+
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan VersionRecoveryDelay = TimeSpan.FromMinutes(1);
 
@@ -19,7 +25,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
     public string Variant { get; }
 
-    public string? DistributionVersion { get; private set; }
+    public string DistributionVersion { get; private set; } = UnknownDistributionVersion;
 
     public string SynchronisationState { get; private set; } = "Pending";
 
@@ -69,12 +75,13 @@ public sealed class DistributionSynchronisationService : BackgroundService
         {
             logger.LogInformation("SKIP: Synchronisation Skipped (Manual Override)");
 
-            try { await ResolveDistributionVersionWithoutSynchronising(stoppingToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
-
             SynchronisationState = "Disabled";
 
             ready.TrySetResult();
+
+            // The CDN Is Not Contacted At All Here, Not Even For The Version: Synchronisation Is Switched Off, So The Operator Has Asked For The Local Distribution To Be Used As-Is
+            // The Version Therefore Stays At Its Placeholder Until An On-Demand Synchronisation Resolves It, Which Also Keeps Start-Up Immediate On A Host With No Network
+            logger.LogInformation("INIT: The Distribution Version Is Not Resolved While Synchronisation Is Disabled; Pongs Will Advertise {Version}", UnknownDistributionVersion);
 
             try { await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { }
@@ -87,12 +94,14 @@ public sealed class DistributionSynchronisationService : BackgroundService
         {
             logger.LogInformation("SKIP: Synchronisation Skipped (Development Environment)");
 
-            try { await ResolveDistributionVersionWithoutSynchronising(stoppingToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
-
             SynchronisationState = "Skipped (Development Environment)";
 
             ready.TrySetResult();
+
+            // Synchronisation Is Still Enabled Here; Only The Mirroring Is Skipped, So The Version Is Worth Resolving
+            // It Is Resolved After The Ready Gate Rather Than Before It, So An Unreachable CDN Delays Nothing; The Ping Responder Rebuilds Its Template As Soon As The Version Arrives
+            try { await ResolveDistributionVersionWithoutSynchronising(stoppingToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
 
             try { await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { }
@@ -132,7 +141,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
                     ready.TrySetResult();
 
                     // The Manifest Fetch Is What Failed When The Version Is Still Unknown, So It Is Retried In The Background Rather Than Left Unknown For The Life Of The Process
-                    if (DistributionVersion is null)
+                    if (DistributionVersion == UnknownDistributionVersion)
                         await RecoverDistributionVersion(stoppingToken).ConfigureAwait(false);
 
                     break;
@@ -264,9 +273,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
     /// </summary>
     private async Task RecoverDistributionVersion(CancellationToken stoppingToken)
     {
-        logger.LogWarning("FAIL: The Distribution Version Is Unknown; Pongs Will Advertise No Version And Clients Will Not List This Server Until The Manifest Can Be Fetched");
+        logger.LogWarning("FAIL: The Distribution Version Is Unknown; Pongs Will Advertise {Version} Until The Manifest Can Be Fetched", UnknownDistributionVersion);
 
-        while (stoppingToken.IsCancellationRequested is false && DistributionVersion is null)
+        while (stoppingToken.IsCancellationRequested is false && DistributionVersion == UnknownDistributionVersion)
         {
             try { await Task.Delay(VersionRecoveryDelay, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }

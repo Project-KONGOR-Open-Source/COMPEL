@@ -26,13 +26,40 @@ public sealed class UDPPingResponderTests
         }
     }
 
+    // The Version Field Is A Variable-Length String Followed By A Constant Number Of Trailing Bytes, So A Longer Version Grows The Packet Rather Than Being Cropped To Fit It
     [Test]
-    public async Task A_Missing_Version_Produces_A_Template_With_No_Version_Bytes()
+    public async Task A_Version_Longer_Than_Twelve_Bytes_Is_Not_Cropped()
     {
-        byte[] response = UDPPingResponder.BuildResponseTemplate("Server", version: null);
+        const string serverName = "KONGOR ARENA";
+        const string version = "4.10.1.20260617";
 
-        byte[] serverNameBytes = Encoding.UTF8.GetBytes("Server");
+        byte[] response = UDPPingResponder.BuildResponseTemplate(serverName, version);
 
-        await Assert.That(response.Length).IsEqualTo(69 + serverNameBytes.Length);
+        byte[] serverNameBytes = Encoding.UTF8.GetBytes(serverName);
+        byte[] versionBytes = Encoding.UTF8.GetBytes(version);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(versionBytes.Length).IsGreaterThan(12);
+            await Assert.That(response.Length).IsEqualTo(69 + serverNameBytes.Length + versionBytes.Length);
+            await Assert.That(response.Skip(50 + serverNameBytes.Length).Take(versionBytes.Length).SequenceEqual(versionBytes)).IsTrue();
+        }
+    }
+
+    [Test]
+    public async Task An_Unresolved_Version_Is_Advertised_As_The_Placeholder()
+    {
+        const string serverName = "Server";
+
+        byte[] response = UDPPingResponder.BuildResponseTemplate(serverName, DistributionSynchronisationService.UnknownDistributionVersion);
+
+        byte[] serverNameBytes = Encoding.UTF8.GetBytes(serverName);
+        byte[] versionBytes = Encoding.UTF8.GetBytes(DistributionSynchronisationService.UnknownDistributionVersion);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(response.Length).IsEqualTo(69 + serverNameBytes.Length + versionBytes.Length);
+            await Assert.That(response.Skip(50 + serverNameBytes.Length).Take(versionBytes.Length).SequenceEqual(versionBytes)).IsTrue();
+        }
     }
 }
