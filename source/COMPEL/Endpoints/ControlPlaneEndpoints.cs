@@ -55,6 +55,8 @@ public static class ControlPlaneEndpoints
                 ProxyRunning:              proxy.IsRunning,
                 PingResponderBound:        pingResponder.IsBound,
                 ProxyFailedForwarderCount: proxy.FailedForwarderCount,
+                ProxyDroppedDatagramCount: proxy.DroppedDatagramCount,
+                ProxyIsUnderAttack:        proxy.IsUnderAttack,
                 UptimeSeconds:             (Environment.TickCount64 - startTicks) / 1000.0
             );
 
