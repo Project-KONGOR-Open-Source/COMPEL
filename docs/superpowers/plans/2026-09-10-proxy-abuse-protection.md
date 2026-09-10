@@ -1306,7 +1306,8 @@ The existing `UDPForwarderTests` already relays over loopback; add to it.
         using Socket server = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         server.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-        int localPort = ((IPEndPoint)server.LocalEndPoint!).Port;
+        // The Null-Forgiving Operator Is Banned, And This File Already Has The Idiom For This
+        int localPort = server.LocalEndPoint is IPEndPoint bound ? bound.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
 
         using UDPForwarder forwarder = new (0, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, NullLogger.Instance);
 
