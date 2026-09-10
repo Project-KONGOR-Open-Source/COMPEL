@@ -138,11 +138,12 @@ internal sealed class UDPForwarder : IDisposable
             // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
             else if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
             {
-                int weight = admission is ChallengeAdmission.Duplicate
-                    ? ViolationScoreContainer.DuplicateViolationWeight
-                    : ViolationScoreContainer.RateLimitViolationWeight;
+                // Constant Reasons Rather Than "admission.ToString()", Which Would Allocate On Every Dropped Datagram Whether Or Not The Drop Is Logged, And A Flood Is Made Entirely Of Dropped Datagrams
+                if (admission is ChallengeAdmission.Duplicate)
+                    Drop(client, ViolationScoreContainer.DuplicateViolationWeight, "Duplicate");
 
-                Drop(client, weight, admission.ToString());
+                else
+                    Drop(client, ViolationScoreContainer.RateLimitViolationWeight, "Over Quota");
 
                 continue;
             }
