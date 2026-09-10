@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
-///     Exercises the proxy forwarder over loopback: that datagrams are relayed to the server and back, that a client is issued a challenge, and that each renewal carries a strictly greater value.
+///     Exercises the proxy forwarder over loopback: that a valid datagram is relayed to the server and back, that a datagram too short to validate is dropped instead, that a client is issued a challenge, and that each renewal carries a strictly greater value.
 ///     This validates the challenge wire format (which cannot be tested against a live client here) end to end against the real forwarder.
 ///     The tests run serially and tolerate the occasional loopback datagram drop by retrying, so they do not flake under load.
 /// </summary>
@@ -32,7 +32,13 @@ public sealed class UDPForwarderTests
             client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
             IPEndPoint publicEndPoint = new (IPAddress.Loopback, publicPort);
-            byte[] hello = Encoding.UTF8.GetBytes("HELLO");
+
+            // The Proxy Is No Longer A Transparent Relay: A Game Datagram Shorter Than The Reader's Minimum Is Dropped Unread, So The Probe Must Be Long Enough To Be Judged On Its Contents Rather Than Its Length
+            // Its Challenge And Counter Fields Are Left Zero, Which Is The Unauthenticated Case: Zero Never Matches An Issued Challenge Because "SendChallenge" Skips It, And A Zero Counter Is Within The Unauthenticated Allowance, So The Datagram Is Relayed
+            byte[] hello = new byte[ClientPacketReader.MinimumLength(ProxyForwarderKind.Game)];
+
+            Encoding.UTF8.GetBytes("HELLO").CopyTo(hello, 0);
+
             byte[] pong = Encoding.UTF8.GetBytes("PONG");
 
             bool relayedToServer = false;
@@ -105,7 +111,7 @@ public sealed class UDPForwarderTests
             using Socket client = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-            // Establishing A Session Triggers The Initial Challenge
+            // Establishing A Session Triggers The Initial Challenge; This Datagram Is Deliberately Too Short And Is Dropped, Because A Client Sending Nothing Valid Must Still Be Challenged Or It Could Never Learn A Challenge To Echo
             await client.SendToAsync(Encoding.UTF8.GetBytes("HELLO"), SocketFlags.None, new IPEndPoint(IPAddress.Loopback, publicPort));
 
             // Flush Any Challenges Buffered From Session Creation So The Two Values Compared Below Are Read In Issue Order
