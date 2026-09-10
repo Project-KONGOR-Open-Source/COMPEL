@@ -1497,10 +1497,9 @@ git commit -m "Validate And Rate Limit Client Datagrams In The Proxy"
 ### Task 6: Report Through The Control Plane, Then Verify Live
 
 **Files:**
-- Modify: `source/COMPEL/Services/Proxy/UDPProxyService.cs`
+- Modify: `source/COMPEL/Services/Proxy/UDPProxyService.cs` (the aggregate count, the under-attack indicator, and the deferred-work TODO)
 - Modify: `source/COMPEL/Endpoints/Contracts.cs`
 - Modify: `source/COMPEL/Endpoints/ControlPlaneEndpoints.cs`
-- Modify: `source/COMPEL/Services/Proxy/UDPProxyService.cs` (the proxy TODO)
 
 **Interfaces:**
 - Consumes: `UDPForwarder.DroppedDatagramCount`.
@@ -1510,21 +1509,43 @@ git commit -m "Validate And Rate Limit Client Datagrams In The Proxy"
 
 ```bash
 grep -n "ProxyFailedForwarderCount" source/COMPEL/Endpoints/Contracts.cs source/COMPEL/Endpoints/ControlPlaneEndpoints.cs
-grep -n "TODO" source/COMPEL/Services/Proxy/UDPProxyService.cs
+grep -n "FailedForwarderCount\|forwarders\|TODO" source/COMPEL/Services/Proxy/UDPProxyService.cs
 ```
 
-Expected: the existing failed-forwarder member shows the pattern the new member follows; and the existing TODO is the one to extend with the deferred watermark work.
+Expected: the existing failed-forwarder member shows the pattern the new member follows; the existing TODO is the one to extend with the deferred watermark work; and, importantly, `FailedForwarderCount` is `Volatile.Read` of a plain `int` field rather than anything computed from `forwarders`.
+
+**That last point is a constraint, not trivia.** `forwarders` is a plain `List<UDPForwarder>`, added to during start-up and `Clear()`ed on shutdown, with no synchronisation. Enumerating it from the control-plane thread — which is what a `Sum` over it would do — throws `InvalidOperationException` if a request lands during either, turning `/status` into a 500. The existing member sidesteps this by publishing a field, and the new one must do the same.
 
 - [ ] **Step 2: Expose the aggregate count**
 
-In `UDPProxyService`:
+In `UDPProxyService`, beside `failedForwarderCount`, following the same publish-a-field pattern for the same reason:
 
 ```csharp
+    private int droppedDatagramCount;
+
     /// <summary>
-    ///     The number of client datagrams the proxy has refused to relay, across every forwarder.
+    ///     The number of client datagrams the proxy has refused to relay, across every forwarder, as at the last maintenance pass.
     /// </summary>
-    public int DroppedDatagramCount => forwarders.Sum(forwarder => forwarder.DroppedDatagramCount);
+    public int DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
 ```
+
+The aggregate is summed inside `RunMaintenanceLoop`, which already iterates `forwarders` on the only thread that may. Extend that existing loop body rather than adding a second pass over the collection:
+
+```csharp
+            int droppedDatagrams = 0;
+
+            foreach (UDPForwarder forwarder in forwarders)
+            {
+                forwarder.ChallengeActiveSessions();
+                forwarder.EvictIdleSessions(IdleSessionTimeout);
+
+                droppedDatagrams += forwarder.DroppedDatagramCount;
+            }
+
+            Volatile.Write(ref droppedDatagramCount, droppedDatagrams);
+```
+
+The reported count is therefore at most one maintenance pass stale, which is what a status endpoint wants anyway.
 
 - [ ] **Step 3: Add it to the status contract**
 
@@ -1578,7 +1599,7 @@ In `UDPProxyService`, beside the existing fields:
     public bool IsUnderAttack => Volatile.Read(ref isUnderAttack);
 ```
 
-In `RunMaintenanceLoop`, alongside the `scoreContainer.Drain();` call added in Task 5, close the window once enough passes have elapsed and judge the refusals counted in it:
+In `RunMaintenanceLoop`, after the `Volatile.Write` of the aggregate from Step 2 — so the window judges a freshly summed count — and alongside the `scoreContainer.Drain();` call added in Task 5, close the window once enough passes have elapsed and judge the refusals counted in it:
 
 ```csharp
             if (++maintenancePassesThisWindow >= UnderAttackWindowPasses)
@@ -1644,7 +1665,7 @@ git commit -m "Report Proxy Datagram Drops Through The Control Plane"
 ## Final Verification
 
 - [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
-- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 29 new tests across the six new units.
+- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 38 new tests across the six new units.
 - [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
 - [ ] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
 - [ ] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
