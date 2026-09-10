@@ -46,6 +46,8 @@ dotnet run --project source/COMPEL
 
 The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password` (and `AuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run COMPEL. Logs are written to the console and to a single `COMPEL.log` beside the executable.
 
+On Windows, COMPEL must be installed in a directory whose full path contains a whitespace character, for example `C:\HoN Match Server`. The match server manager spawns each server instance with an unquoted executable path, which Heroes Of Newerth only parses correctly when that path contains a whitespace character; without one every instance starts as a game client instead of a dedicated server and never binds its game port. COMPEL refuses to start from such a path rather than let the manager come up and register servers that no client can join. The restriction does not apply on Linux, where the manager quotes the path it spawns.
+
 ## Control Plane
 
 | Method | Route                                                       | Authentication | Purpose                                                                              |
