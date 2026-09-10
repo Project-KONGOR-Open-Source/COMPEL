@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
-///     Exercises the proxy forwarder over loopback: that a valid datagram is relayed to the server and back, that a datagram too short to validate is dropped instead, that a client is issued a challenge, and that each renewal carries a strictly greater value.
+///     Exercises the proxy forwarder over loopback: that a valid datagram is relayed to the server and back, that a datagram too short to validate is dropped instead, that a client is issued a challenge, that each renewal carries a strictly greater value, that a repeated counter under one challenge is dropped as a duplicate, that a counter at the quota is dropped, that a challenge the proxy never issued is dropped and charged, that an unauthenticated counter at the total is dropped, and that an actioned source is refused whatever it sends and before its datagram is otherwise read.
 ///     This validates the challenge wire format (which cannot be tested against a live client here) end to end against the real forwarder.
 ///     The tests run serially and tolerate the occasional loopback datagram drop by retrying, so they do not flake under load.
 /// </summary>
@@ -146,11 +146,7 @@ public sealed class UDPForwarderTests
     {
         await using ForwarderProbe probe = new ();
 
-        using (Assert.Multiple())
-        {
-            await Assert.That(await probe.Relays(new byte[8])).IsFalse();
-            await Assert.That(probe.Forwarder.DroppedDatagramCount).IsGreaterThan(0);
-        }
+        await Assert.That(await probe.Refuses(new byte[8])).IsTrue();
     }
 
     [Test]
@@ -174,7 +170,7 @@ public sealed class UDPForwarderTests
         using (Assert.Multiple())
         {
             await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 5))).IsTrue();
-            await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 5))).IsFalse();
+            await Assert.That(await probe.Refuses(GameDatagram(challenge, counter: 5))).IsTrue();
         }
     }
 
@@ -187,7 +183,7 @@ public sealed class UDPForwarderTests
 
         ushort quota = ChallengeQuota.ForKind(ProxyForwarderKind.Game, TimeSpan.FromSeconds(10));
 
-        await Assert.That(await probe.Relays(GameDatagram(challenge, quota))).IsFalse();
+        await Assert.That(await probe.Refuses(GameDatagram(challenge, quota))).IsTrue();
     }
 
     // A Challenge The Proxy Never Issued Is Not The Same As A Client That Has Not Been Challenged Yet: The Reference Charges It Separately And Drops It, Rather Than Admitting It Under The Unauthenticated Allowance
@@ -198,7 +194,12 @@ public sealed class UDPForwarderTests
 
         await probe.Establish();
 
-        await Assert.That(await probe.Relays(GameDatagram(challenge: 0xDEADBEEF, counter: 1))).IsFalse();
+        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+
+        await Assert.That(await probe.Refuses(GameDatagram(challenge: 0xDEADBEEF, counter: 1))).IsTrue();
+
+        // The Forwarder Must Charge The Violation, Not Merely Drop It: Without The Charge, A Source Below The Expected Rate Never Becomes Actioned And The Recovery-Depends-On-Rate Contract Silently Stops Holding
+        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsGreaterThanOrEqualTo(scoreBefore + ViolationScoreContainer.ChallengeViolationWeight);
     }
 
     [Test]
@@ -208,10 +209,10 @@ public sealed class UDPForwarderTests
 
         await probe.Establish();
 
-        await Assert.That(await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, ChallengeQuota.UnauthenticatedPacketQuota))).IsFalse();
+        await Assert.That(await probe.Refuses(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, ChallengeQuota.UnauthenticatedPacketQuota))).IsTrue();
     }
 
-    // The Allowance Is Checked Before The Challenge Is Matched, So An Actioned Source Is Refused Whatever It Sends; This Is The One Ordering Relation No Unit Test Can Reach
+    // The Allowance Is Checked Before The Challenge Is Matched, So An Actioned Source Is Refused Whatever It Sends
     [Test]
     public async Task An_Actioned_Source_Has_Even_A_Valid_Datagram_Dropped()
     {
@@ -223,7 +224,26 @@ public sealed class UDPForwarderTests
         while (probe.Scores.IsWithinAllowance(probe.ClientEndPoint))
             probe.Scores.ChargeViolation(probe.ClientEndPoint, ViolationScoreContainer.TooShortViolationWeight);
 
-        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsFalse();
+        await Assert.That(await probe.Refuses(GameDatagram(challenge, counter: 1))).IsTrue();
+    }
+
+    // Pins The Order Rather Than The Outcome: An Actioned Source's Short Datagram Must Be Refused By The Allowance Check Before The Length Guard Can Charge It
+    [Test]
+    public async Task An_Actioned_Source_Is_Refused_Before_The_Length_Guard_Charges_It()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await probe.Establish();
+
+        while (probe.Scores.IsWithinAllowance(probe.ClientEndPoint))
+            probe.Scores.ChargeViolation(probe.ClientEndPoint, ViolationScoreContainer.RateLimitViolationWeight);
+
+        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+
+        await Assert.That(await probe.Refuses(new byte[8])).IsTrue();
+
+        // Exactly The Arrival And Nothing Else: If The Arrival Were Charged After The Allowance Check The Score Would Not Move, And If The Length Guard Ran First It Would Rise By "TooShortViolationWeight" As Well
+        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(scoreBefore + ViolationScoreContainer.PacketScore);
     }
 
     private static bool IsChallenge(byte[] datagram)
@@ -294,54 +314,64 @@ public sealed class UDPForwarderTests
     }
 
     /// <summary>
-    ///     A forwarder on loopback with a server behind it and a client in front, so the tests below can assert what does and does not reach the server.
+    ///     A forwarder on loopback with a server behind it and a client in front, so the tests above can assert what does and does not reach the server.
     ///     A negative assertion costs a receive timeout, so these tests are deliberately few and each asserts one branch of the pipeline.
     /// </summary>
     private sealed class ForwarderProbe : IAsyncDisposable
     {
         private readonly CancellationTokenSource lifetime = new ();
         private readonly Task run;
+        private readonly Socket server;
+        private readonly Socket client;
+        private readonly IPEndPoint publicEndPoint;
 
         internal ForwarderProbe()
         {
             int publicPort = FreeUDPPort();
 
-            Server = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            Server.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            server = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            server.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-            int localPort = Server.LocalEndPoint is IPEndPoint boundServer ? boundServer.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
+            int localPort = server.LocalEndPoint is IPEndPoint boundServer ? boundServer.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
 
             Scores = new ViolationScoreContainer(TimeProvider.System);
             Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, NullLogger.Instance);
 
             run = Forwarder.Run(lifetime.Token);
 
-            Client = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            Client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            client = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-            PublicEndPoint = new IPEndPoint(IPAddress.Loopback, publicPort);
+            publicEndPoint = new IPEndPoint(IPAddress.Loopback, publicPort);
         }
-
-        internal Socket Server { get; }
-
-        internal Socket Client { get; }
 
         internal UDPForwarder Forwarder { get; }
 
         internal ViolationScoreContainer Scores { get; }
 
-        internal IPEndPoint PublicEndPoint { get; }
-
-        internal IPEndPoint ClientEndPoint => Client.LocalEndPoint is IPEndPoint boundClient ? boundClient : throw new InvalidOperationException("Could Not Determine The Client Endpoint");
+        internal IPEndPoint ClientEndPoint => client.LocalEndPoint is IPEndPoint boundClient ? boundClient : throw new InvalidOperationException("Could Not Determine The Client Endpoint");
 
         /// <summary>
         ///     Sends the datagram and reports whether it reached the server.
         /// </summary>
         internal async Task<bool> Relays(byte[] datagram)
         {
-            await Client.SendToAsync(datagram, SocketFlags.None, PublicEndPoint);
+            await client.SendToAsync(datagram, SocketFlags.None, publicEndPoint);
 
-            return await TryReceive(Server) is not null;
+            return await TryReceive(server) is not null;
+        }
+
+        /// <summary>
+        ///     Sends the datagram and reports whether the forwarder refused it: that it did not reach the server, and that the forwarder counted a refusal.
+        ///     Both halves matter, because a receive timeout on its own is also what a dead receive loop looks like.
+        /// </summary>
+        internal async Task<bool> Refuses(byte[] datagram)
+        {
+            int refusedBefore = Forwarder.DroppedDatagramCount;
+
+            bool relayed = await Relays(datagram);
+
+            return relayed is false && Forwarder.DroppedDatagramCount > refusedBefore;
         }
 
         /// <summary>
@@ -351,18 +381,20 @@ public sealed class UDPForwarderTests
         {
             await Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
 
-            return await ReadOneChallengeValue(Forwarder, Client);
+            return await ReadOneChallengeValue(Forwarder, client);
         }
 
         public async ValueTask DisposeAsync()
         {
             await lifetime.CancelAsync();
 
-            try { await run; } catch (Exception) { }
+            // A Faulted Receive Loop Must Fail The Test Rather Than Be Swallowed: Every Assertion Here Is A Negative, And A Dead Loop Satisfies A Negative Just As Well As A Correct Refusal Does
+            try { await run; }
+            catch (OperationCanceledException) { }
 
-            Client.Dispose();
+            client.Dispose();
             Forwarder.Dispose();
-            Server.Dispose();
+            server.Dispose();
             lifetime.Dispose();
         }
     }

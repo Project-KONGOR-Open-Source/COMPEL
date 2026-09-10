@@ -117,7 +117,7 @@ internal sealed class UDPForwarder : IDisposable
             // Every Datagram Costs Its Source, Whatever It Turns Out To Contain, Which Is What The Drain Rate Is Calibrated Against; The Reference Does This First As Well
             scoreContainer.ChargeArrival(client);
 
-            // A Source Already Over The Threshold Is Refused Before Any Field Of Its Datagram Is Read. The Session And Its Challenge Already Exist By This Point, Because A Client Must Be Challenged Before It Can Send Anything Valid
+            // A Source Already Over The Threshold Is Refused Before Any Field Of Its Datagram Is Read. By This Point The Session Exists, Its Challenge Has Been Issued And Its Idle Timer Has Been Refreshed, Because A Client Must Be Challenged Before It Can Send Anything Valid
             if (scoreContainer.IsWithinAllowance(client) is false)
             {
                 Drop(client, "Actioned");
@@ -148,6 +148,7 @@ internal sealed class UDPForwarder : IDisposable
             // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
             if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
             {
+                // Constant Reasons Rather Than "admission.ToString()", Which Would Allocate On Every Dropped Datagram Whether Or Not The Drop Is Logged, And A Flood Is Made Entirely Of Dropped Datagrams
                 if (admission is ChallengeAdmission.Duplicate)
                     Drop(client, ViolationScoreContainer.DuplicateViolationWeight, "Duplicate");
 
@@ -215,26 +216,26 @@ internal sealed class UDPForwarder : IDisposable
         return packet;
     }
 
-    private bool Drop(IPEndPoint client, int weight, string reason)
+    private void Drop(IPEndPoint client, int weight, string reason)
     {
         scoreContainer.ChargeViolation(client, weight);
 
-        return Drop(client, reason);
+        Drop(client, reason);
     }
 
     /// <summary>
-    ///     Counts a refused datagram and logs the reason once per source, so that a flood cannot become a log flood.
+    ///     Counts a refused datagram and logs the reason once per source endpoint, so that a flood from a single source cannot become a log flood.
     ///     Returns whether this was the first refusal reported for the source, so a caller with more detail can log it under the same throttle.
     /// </summary>
     private bool Drop(IPEndPoint client, string reason)
     {
         Interlocked.Increment(ref droppedDatagramCount);
 
-        if (reportedDrops.Count >= ReportedDropLimit)
-            reportedDrops.Clear();
-
         if (reportedDrops.TryAdd(client, true) is false)
             return false;
+
+        if (reportedDrops.Count > ReportedDropLimit)
+            reportedDrops.Clear();
 
         logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
 
@@ -336,9 +337,11 @@ internal sealed class UDPForwarder : IDisposable
                     continue;
 
                 if (sessions.TryRemove(pair.Key, out ClientSession? removed))
+                {
                     removed.Dispose();
 
-                reportedDrops.TryRemove(pair.Key, out _);
+                    reportedDrops.TryRemove(pair.Key, out _);
+                }
             }
         }
     }
