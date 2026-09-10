@@ -602,8 +602,11 @@ internal sealed class ViolationScoreContainer : IDisposable
         {
             entry.Value.TryReplenish();
 
-            if (entry.Value.GetStatistics()?.CurrentAvailablePermits >= ActionableThreshold && limiters.TryRemove(entry.Key, out TokenBucketRateLimiter? removed))
-                removed.Dispose();
+            // A Source Whose Allowance Is Fully Restored Is Forgotten, So An Address That Has Stopped Misbehaving Is Not Tracked For The Life Of The Process
+            // The Removed Limiter Is Deliberately Not Disposed Here: A Datagram Thread May Already Hold The Same Reference, And Disposing It Underneath That Thread Would Throw On The Hot Path
+            // Dropping The Reference Leaks Nothing, Because Automatic Replenishment Is Off And The Limiter Owns No Timer; At Worst One Charge Lands On The Orphaned Instance, Which Was At Full Allowance Anyway
+            if (entry.Value.GetStatistics()?.CurrentAvailablePermits >= ActionableThreshold)
+                limiters.TryRemove(entry.Key, out _);
         }
     }
 
