@@ -1,8 +1,9 @@
 namespace COMPEL.Services.Proxy;
 
-// TODO: This Proxy Performs The Transport, Port Remapping, And Client Authentication Only; It Does Not Detect Cheaters Or Ban Anyone
-// The Native Proxy's Detection Heuristics Lived In A Closed Binary And Are Not Reproduced, And The Previous Firewall And Ban-List Mechanism Was Removed As Ineffective
-// A Future Redesign Is Expected To Introduce A Different Enforcement Approach, Likely Not A Static Ban List, At Which Point A Hook To Drop Or Block Traffic Per Source Can Be Reintroduced
+// TODO: The Proxy Validates Datagram Length, The Per-Challenge Packet Quota, And Duplicate Counters, And Scores Abuse Per Source; It Does Not Yet Validate The Watermarks
+// TODO: The Reference Proxy Also Checks A Constant Per-Region Watermark And A Dynamic CRC32C One, Which Together Are Its Anti-Cheat Signal; Adding Them Needs A Region Setting COMPEL Has No Equivalent For, And Carries A Higher False-Positive Cost Than The Checks Above
+// TODO: Challenge Values Are A Monotonic Counter Rather Than The Reference's Cryptographically Random One, So They Are Guessable; A Source That Guesses One Is Held To The Per-Challenge Quota Instead Of The Much Smaller Unauthenticated One, And Watermark Validation Would Depend On Them Being Unpredictable
+// TODO: Making Them Random Means Separating The Challenge From The Creation Timestamp, Which Currently Share One Value In "BuildChallengePacket", So It Is Deliberately Left Alone Here Rather Than Changed On A Path That Works In Production
 /// <summary>
 ///     The managed, cross-platform proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
 ///     Heroes Of Newerth clients throttle their own traffic on the public port range until the proxy authenticates them, so each forwarder issues a challenge to every session on creation and this service renews those challenges periodically.
@@ -13,6 +14,12 @@ public sealed class UDPProxyService : BackgroundService
 
     // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
     private static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
+
+    // "UNDER_ATTACK_THRESHOLD": Refusals Within One Window Above Which The Proxy Reports Itself Under Attack
+    private const int UnderAttackThreshold = 1000;
+
+    // The Reference Resets Its Indicator Every Five Minutes Of Its Own Housekeeping Tick; Derived From The Interval Rather Than Written Down Twice, So It Stays Five Minutes If The Interval Changes
+    private static readonly int UnderAttackWindowPasses = (int) Math.Max(1, TimeSpan.FromMinutes(5).Ticks / ChallengeRenewalInterval.Ticks);
 
     private readonly MatchServerManagerOptions options;
     private readonly PortPlan ports;
@@ -28,6 +35,10 @@ public sealed class UDPProxyService : BackgroundService
 
     private volatile bool running;
     private int failedForwarderCount;
+    private int droppedDatagramCount;
+    private int maintenancePassesThisWindow;
+    private int droppedDatagramsAtWindowStart;
+    private bool isUnderAttack;
 
     public UDPProxyService(IOptions<MatchServerManagerOptions> options, PortPlan ports, ILogger<UDPProxyService> logger)
     {
@@ -47,6 +58,16 @@ public sealed class UDPProxyService : BackgroundService
     ///     The number of game/voice ports that failed to bind on startup. A non-zero value means the proxy is running in a degraded state: some instances have no working proxy at all even though <see cref="IsRunning"/> is <see langword="true"/>.
     /// </summary>
     public int FailedForwarderCount => Volatile.Read(ref failedForwarderCount);
+
+    /// <summary>
+    ///     The number of client datagrams the proxy has refused to relay, across every forwarder, as at the last maintenance pass.
+    /// </summary>
+    public int DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
+
+    /// <summary>
+    ///     Whether the proxy refused more datagrams in the last completed window than the under-attack threshold allows.
+    /// </summary>
+    public bool IsUnderAttack => Volatile.Read(ref isUnderAttack);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -132,10 +153,31 @@ public sealed class UDPProxyService : BackgroundService
 
             scoreContainer.Drain();
 
+            int droppedDatagrams = 0;
+
             foreach (UDPForwarder forwarder in forwarders)
             {
                 forwarder.ChallengeActiveSessions();
                 forwarder.EvictIdleSessions(IdleSessionTimeout);
+
+                droppedDatagrams += forwarder.DroppedDatagramCount;
+            }
+
+            Volatile.Write(ref droppedDatagramCount, droppedDatagrams);
+
+            if (++maintenancePassesThisWindow >= UnderAttackWindowPasses)
+            {
+                maintenancePassesThisWindow = 0;
+
+                int droppedDatagramsSnapshot = DroppedDatagramCount;
+                int droppedThisWindow = droppedDatagramsSnapshot - droppedDatagramsAtWindowStart;
+
+                droppedDatagramsAtWindowStart = droppedDatagramsSnapshot;
+
+                Volatile.Write(ref isUnderAttack, droppedThisWindow > UnderAttackThreshold);
+
+                if (droppedThisWindow > UnderAttackThreshold)
+                    logger.LogWarning("The Proxy Refused {DroppedDatagrams} Datagram(s) In The Last Window, Which Exceeds The Under-Attack Threshold Of {Threshold}", droppedThisWindow, UnderAttackThreshold);
             }
         }
     }
