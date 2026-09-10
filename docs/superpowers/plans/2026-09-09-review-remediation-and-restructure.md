@@ -2342,12 +2342,12 @@ Expected: build succeeds with 0 warnings; 65 tests pass, including `A_Generated_
 
 - [x] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
 - [x] The LF detection command from Task 18 prints nothing for `source/`.
-- [x] `dotnet test source/COMPEL.slnx` reports 65 passed.
+- [x] `dotnet test source/COMPEL.slnx` reports 65 passed. Later work outside this plan added three tests, so the suite now reports 68.
 - [x] `grep -rn 'Serilog' source --include=*.cs --include=*.csproj | grep -v '/obj/'` prints nothing.
 - [x] `find source/COMPEL source/COMPEL.Tests -type d -not -path '*/bin*' -not -path '*/obj*' | while read directory; do files=$(find "$directory" -maxdepth 1 -type f | wc -l); folders=$(find "$directory" -mindepth 1 -maxdepth 1 -type d -not -name bin -not -name obj | wc -l); if [ "$files" -gt 0 ] && [ "$folders" -gt 0 ]; then echo "$directory"; fi; done` prints only `source/COMPEL` and `source/COMPEL.Tests`, the two project roots, whose loose files are the project files and the entry point.
 - [x] The two comment detection commands from Task 15 print nothing.
 - [x] `git diff --no-index` between each parity-tracked file and its WILLOWMAKER copy shows only the permitted lines.
-- [x] Nothing has been committed in either repository: `git log -1 --format=%s` still prints `Upgrade To .NET 11` in COMPEL.
+- [x] Nothing had been committed in either repository at the point this plan finished executing. The staging slices below have since been committed: fifteen commits in COMPEL, ending at `Drop The Product Prefix From The Configuration Types`, and one in WILLOWMAKER, `Rename Abbreviated Identifier In Content Broker`.
 
 ## Staging Slices
 
