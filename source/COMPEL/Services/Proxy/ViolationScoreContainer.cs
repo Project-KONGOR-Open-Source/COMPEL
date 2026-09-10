@@ -34,7 +34,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     // "WARN_BANNED": Charged For Every Datagram From A Source That Is Already Actioned, Which Is What Drives A Persistent Source Towards "MaximumViolationScore"
     internal const int ActionedViolationWeight = 10;
 
-    // The Reference Drains Only Once At Least This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
+    // The Reference Drains Only Once More Than This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
     private static readonly TimeSpan MinimumDrainInterval = TimeSpan.FromMilliseconds(900);
 
     private readonly ConcurrentDictionary<IPEndPoint, int> scores = new ();
@@ -96,6 +96,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
         {
             int remaining = entry.Value > drainAmount ? (int)(entry.Value - drainAmount) : 0;
 
+            // A Source Drained To Zero Is Forgotten, So An Address That Has Stopped Misbehaving Is Not Tracked For The Life Of The Process
             // Both Writes Are Conditional On The Score Not Having Changed Since It Was Read: If A Charge Landed During This Pass, The Source Simply Waits For The Next One, Which Loses A Drain Rather Than A Charge
             if (remaining is 0)
                 scores.TryRemove(entry);
