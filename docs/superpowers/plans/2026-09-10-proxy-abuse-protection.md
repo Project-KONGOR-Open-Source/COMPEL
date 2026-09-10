@@ -1377,6 +1377,20 @@ The existing `UDPForwarderTests` already relays over loopback; add to it.
 
 Note: the existing tests construct `UDPForwarder` with the old three-argument constructor and must be updated to the new signature in Step 4, passing `ProxyForwarderKind.Game`, `TimeSpan.FromSeconds(10)` and a container.
 
+**Their payloads need updating too, not only their constructor calls.** `A_Datagram_Is_Relayed_To_The_Server_And_The_Reply_Is_Relayed_Back_To_The_Client` sends a five-byte `"HELLO"` and asserts it reaches the server byte-for-byte. That test was written when the proxy was a transparent relay, which is what this task ends, so the length guard now drops it and the test fails. The test is what changes:
+
+```csharp
+            // The Proxy Is No Longer A Transparent Relay: A Game Datagram Shorter Than The Reader's Minimum Is Dropped Unread, So The Probe Must Be Long Enough To Be Judged On Its Contents Rather Than Its Length
+            // Its Challenge And Counter Fields Are Left Zero, Which Is The Unauthenticated Case: Zero Never Matches An Issued Challenge Because "SendChallenge" Skips It, And A Zero Counter Is Within The Unauthenticated Allowance, So The Datagram Is Relayed
+            byte[] hello = new byte[ClientPacketReader.MinimumLength(ProxyForwarderKind.Game)];
+
+            Encoding.UTF8.GetBytes("HELLO").CopyTo(hello, 0);
+```
+
+The length comes from `ClientPacketReader.MinimumLength` rather than the literal so the test cannot drift from the reader, and the `SequenceEqual` assertion stays exactly as it is, because the relayed datagram is still byte-identical.
+
+`Each_Challenge_Renewal_Carries_A_Strictly_Greater_Value` keeps its five-byte payload deliberately: it passes because a session is created, and therefore challenged, before its datagram is validated, and that is a property worth keeping tested rather than tidying away - a client sending nothing valid must still be challenged, or it could never learn a challenge to echo. Sharpen its comment to say so and change no code.
+
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `dotnet build source/COMPEL.slnx`
@@ -1464,11 +1478,12 @@ Then replace the forwarding block in `Run`, immediately after `session.Touch()`,
             // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
             else if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
             {
-                int weight = admission is ChallengeAdmission.Duplicate
-                    ? ViolationScoreContainer.DuplicateViolationWeight
-                    : ViolationScoreContainer.RateLimitViolationWeight;
+                // Constant Reasons Rather Than "admission.ToString()", Which Would Allocate On Every Dropped Datagram Whether Or Not The Drop Is Logged, And A Flood Is Made Entirely Of Dropped Datagrams
+                if (admission is ChallengeAdmission.Duplicate)
+                    Drop(client, ViolationScoreContainer.DuplicateViolationWeight, "Duplicate");
 
-                Drop(client, weight, admission.ToString());
+                else
+                    Drop(client, ViolationScoreContainer.RateLimitViolationWeight, "Over Quota");
 
                 continue;
             }
