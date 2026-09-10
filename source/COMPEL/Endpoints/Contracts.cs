@@ -31,7 +31,7 @@ public sealed record StatusResponse
     bool UseProxy,
     int PortRangeOffset,
     PortAllocationResponse Ports,
-    string? DistributionVersion,
+    string DistributionVersion,
     string SynchronisationState,
     bool ManagerRunning,
     bool ProxyRunning,

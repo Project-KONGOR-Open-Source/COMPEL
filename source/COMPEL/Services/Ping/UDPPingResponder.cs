@@ -38,11 +38,11 @@ public sealed class UDPPingResponder : BackgroundService
 
         int port = ports.PingPort;
 
-        string? templateVersion = distribution.DistributionVersion;
+        string templateVersion = distribution.DistributionVersion;
         byte[] response = BuildResponseTemplate(options.ServerNamePrefix, templateVersion);
 
-        if (templateVersion is null)
-            logger.LogWarning("No Distribution Version Is Known; Pongs Will Advertise An Empty Version And Clients Will Not List This Server");
+        if (templateVersion == DistributionSynchronisationService.UnknownDistributionVersion)
+            logger.LogWarning("The Distribution Version Is Not Known Yet; Pongs Will Advertise {Version} Until It Is Resolved", templateVersion);
 
         using Socket socket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
@@ -114,12 +114,12 @@ public sealed class UDPPingResponder : BackgroundService
         }
     }
 
-    internal static byte[] BuildResponseTemplate(string serverName, string? version)
+    internal static byte[] BuildResponseTemplate(string serverName, string version)
     {
         byte[] serverNameBytes = Encoding.UTF8.GetBytes(serverName);
 
-        byte[] versionBytes = Encoding.UTF8.GetBytes(version ?? string.Empty);
-        int versionLength = Math.Min(versionBytes.Length, 12);
+        byte[] versionBytes = Encoding.UTF8.GetBytes(version);
+        int versionLength = versionBytes.Length;
 
         // The Trailing Bytes Beyond The Version Are Part Of The Wire Format And Are Left Zeroed, As In The Original Responder
         byte[] response = new byte[69 + serverNameBytes.Length + versionLength];
