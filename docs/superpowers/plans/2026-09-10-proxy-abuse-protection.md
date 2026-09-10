@@ -1748,7 +1748,7 @@ In the reference this is safe, because crossing the threshold triggers a firewal
 
 **Two retained challenges is not enough.** A client at thirty packets a second that loses two consecutive renewals has its challenge evicted while its counter is legitimately around 600 — far past the unauthenticated total of 100 — so every subsequent datagram costs 201 and twenty of them cross the threshold in under a second. The reference retains `KEEP_CHALLENGES` (6) at a five-second refresh, thirty seconds of history; six at COMPEL's ten-second renewal gives sixty. Six windows is 8.6 kilobytes per session against 2.9, still nothing at two dozen sessions.
 
-**Challenge zero becomes a real window.** The reference seeds `responses[0]` and runs the same duplicate check over it as over any issued challenge, resetting it every `CLEAR_UNAUTHENTICATED` (3) refreshes. Modelling it as a window with a quota of `UnauthenticatedPacketQuota` gives the duplicate check for free and lets the forwarder take one path instead of two.
+**Challenge zero becomes a real window.** The reference seeds `responses[0]` and runs the same duplicate check over it as over any issued challenge, resetting it periodically. Its counter is incremented once per challenge *refresh* rather than per housekeeping pass and is initialised to `CLEAR_UNAUTHENTICATED`, so in steady state it resets on every fourth refresh — roughly every twenty-four seconds at its five-second refresh. Three ten-second renewals gives thirty seconds, deliberately a little stricter. Modelling it as a window with a quota of `UnauthenticatedPacketQuota` gives the duplicate check for free and lets the forwarder take one path instead of two.
 
 - [ ] **Step 1: Fact verification**
 
@@ -1874,11 +1874,7 @@ Replace `A_Challenge_Older_Than_The_Previous_One_Is_Not_Matched` in `SessionChal
         using (Assert.Multiple())
         {
             for (uint challenge = 1; challenge <= SessionChallengeState.RetainedChallengeCount; challenge++)
-            {
-                uint issued = challenge;
-
-                await Assert.That(state.Match(issued)).IsNotNull();
-            }
+                await Assert.That(state.Match(challenge)).IsNotNull();
         }
     }
 
@@ -1991,6 +1987,8 @@ internal sealed class SessionChallengeState
     internal const int RetainedChallengeCount = 6;
 
     // "CLEAR_UNAUTHENTICATED": Renewals Between Resets Of The Pre-Authentication Window, So Its Small Total Is A Recurring Allowance Rather Than A Once-Per-Session Budget
+    // The Reference Counts Its Own Five-Second Challenge Refreshes And Resets On Every Fourth, So Roughly Every Twenty-Four Seconds; Three Ten-Second Renewals Is Thirty, Deliberately A Little Stricter On A Path That Relays What It Admits
+    // The Quantity That Matters Is The Rate The Allowance Is Handed Out At, Not The Number Of Rotations, So This Is Not An Off-By-One Against The Reference's Count Of Refreshes
     internal const int UnauthenticatedResetRotations = 3;
 
     private readonly Lock stateLock = new ();
