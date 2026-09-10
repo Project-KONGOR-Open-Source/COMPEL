@@ -161,7 +161,7 @@ One constraint follows and must hold:
 
 **`ClientPacketReader`** — a small static reader over a datagram span exposing the minimum length for a kind, the echoed challenge, and the counter. Pure, span-based, no allocation, and the natural home for the bounds checking. Every offset above lives here as a named constant rather than being scattered.
 
-**Per-session challenge state** — the current and previous challenge, each with its counter ceiling and a duplicate bitmap sized to the quota (180 bytes at a 1440 quota). Held in the existing session record, rotated by the renewal that already exists.
+**Per-session challenge state** — the current and previous challenge, each with its counter ceiling and a set of the counters already seen, sized to the quota (a byte per counter, so under one and a half kilobytes at a 1440 quota; indexing beats bit-masking on the datagram path and the total is negligible). Held in the existing session record, rotated by the renewal that already exists.
 
 **Under-attack indicator** — one counter incremented per violation, reset periodically, logged when it exceeds `UnderAttackThreshold`, surfaced on `/status`.
 
@@ -234,4 +234,4 @@ The material risk is a false positive: dropping a legitimate player mid-match pr
 
 A second, accepted risk: COMPEL's ten-second renewal covers a longer window than the reference's five-second refresh, so a burst inside one window is tolerated where the reference might have acted. The sustained rate is what matters, and a longer window is more forgiving rather than less.
 
-A third: the duplicate bitmap is sized from the quota, so a larger renewal interval costs proportionally more memory per session. At the intended values this is 180 bytes per session and irrelevant, but the coupling is noted so a much longer interval is not chosen carelessly.
+A third: the seen-counter set is sized from the quota, so a larger renewal interval costs proportionally more memory per session. At the intended values this is under three kilobytes per session across both windows and irrelevant, but the coupling is noted so a much longer interval is not chosen carelessly.
