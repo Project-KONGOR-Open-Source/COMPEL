@@ -211,7 +211,7 @@ public sealed class ViolationScoreContainerTests
         }
     }
 
-    // Every Other Advance In This Suite Is A Whole Multiple Of 50 Milliseconds, Which Is Exactly When The Drain Is A Whole Number, So Without This The Truncation Above Is Never Exercised
+    // Every Other Advance In This Suite Is A Whole Multiple Of 50 Milliseconds, Which Is Exactly When The Drain Is A Whole Number, So Without This The Truncation In "Drain" Is Never Exercised
     [Test]
     public async Task A_Drain_Over_A_Fractional_Interval_Truncates_The_Remaining_Score()
     {

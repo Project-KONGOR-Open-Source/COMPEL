@@ -76,7 +76,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
 
     /// <summary>
     ///     Removes score from every tracked source in proportion to the time elapsed since the last drain, flooring at zero, and forgets any source that reaches it so an address which has stopped misbehaving is not tracked for the life of the process.
-    ///     Only one call may be in progress at a time, which the proxy's single maintenance loop satisfies; the elapsed-time mark is unsynchronised, so concurrent calls would each apply a full drain and would corrupt it.
+    ///     Only one call may be in progress at a time, which the proxy's single maintenance loop satisfies. The elapsed-time mark is unsynchronised, so concurrent calls would lose an update to it and measure the following pass from the wrong point; the per-source writes would not double-drain, because each is conditional on the score it read.
     /// </summary>
     internal void Drain()
     {
