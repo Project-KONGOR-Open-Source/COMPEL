@@ -1638,9 +1638,12 @@ sed -n '1247,1254p' "$P"
 
 Expected: `UNDER_ATTACK_THRESHOLD 1000`; the indicator raised by varying amounts at many sites (`+= 100` for most enforcement events, `+= 10000` for one severe case, `++` and `+= 2` for lesser ones); and a reset to zero on the `++clearUnusedPlayers > 5 * 60` branch, logging the indicator first if it is over the threshold.
 
-**The reference's weights do not port and must not be copied.** They are attached to firewall bans, hardware-identifier bans and connection-table exhaustion — enforcement COMPEL deliberately does not implement, since its response is a local drop. COMPEL's single enforcement event is a refused datagram, so it carries the reference's lightest weight, one, and the threshold stays 1000: a thousand refusals inside one window. Keep the reference's five-minute window, because that is what the threshold was chosen against.
+**The reference's weights do not port, and there is no weight to inherit.** They span three unrelated kinds of event, none of which is a refused datagram: the heavy ones (`+= 100`, `+= 10000`) hang off firewall bans, hardware-identifier bans and the banned-table filling up, enforcement COMPEL deliberately does not implement; the weight of one (`main.cpp:1383`, `:1714`) fires on every **newly observed connection**, before any accept-or-reject decision, and doubles as admission control once the running total crosses the threshold; and the `+= 2` (`:1783`) is an info request, not a refusal at all.
 
-This indicator answers "how much are we refusing", not "how many distinct sources are we refusing". One source that is already actioned and keeps sending can trip it on its own. That is accepted here rather than worked around: the score container knows which sources are actioned, so a distinct-source discriminator can be added later without changing this counter.
+So COMPEL is not borrowing the reference's lightest weight — it is choosing one per refused datagram on its own merits, because a refusal is the only enforcement event it has. The threshold stays 1000 and the window stays five minutes because those are the only calibrated numbers available, not because the unit they count is the same.
+
+**Be plain about what that means.** A thousand refusals in five minutes is about 3.3 a second, and the counting is not itself rate-limited (only the logging is). One noisy or simply malfunctioning client sending malformed, duplicate or over-quota datagrams reaches that comfortably on its own. So this indicator means "the proxy is refusing a lot", not "the proxy is facing a coordinated attack", and it should not be read as the latter. Telling those two apart needs a count of distinct actioned sources, which the score container already knows and which can be added later without touching this counter.
+
 
 In `UDPProxyService`, beside the existing fields:
 
