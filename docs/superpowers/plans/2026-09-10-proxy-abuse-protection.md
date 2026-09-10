@@ -1603,11 +1603,11 @@ In `Contracts.cs`, after `ProxyFailedForwarderCount`:
     bool ProxyIsUnderAttack,
 ```
 
-and in `ControlPlaneEndpoints.cs`, after the corresponding line:
+and in `ControlPlaneEndpoints.cs`, after the corresponding line. That construction pads every argument name so the values align in one column, and `ProxyDroppedDatagramCount` happens to be exactly as long as the existing longest name, `ProxyFailedForwarderCount`, so the column does not move - keep the padding:
 
 ```csharp
                 ProxyDroppedDatagramCount: proxy.DroppedDatagramCount,
-                ProxyIsUnderAttack: proxy.IsUnderAttack,
+                ProxyIsUnderAttack:        proxy.IsUnderAttack,
 ```
 
 - [ ] **Step 4: Add the under-attack indicator**
