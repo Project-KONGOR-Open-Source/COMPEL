@@ -79,11 +79,13 @@ if (configuration.ControlPlanePort.Value is < 1 or > 65535)
     return;
 }
 
-// COMPEL Requires Elevated Privileges On Both Platforms; The Manager Assigns Processor Affinity And Priority To Its Child Servers, Which Is Not Possible Otherwise, So There Is No Point Starting Without Them
-if (Environment.IsPrivilegedProcess is false)
+// COMPEL Mirrors The Distribution Into Its Installation Directory And Rewrites Its Own Files During A Self-Update, So Write Access Is A Requirement
+// Checked Up-Front Because The Alternative Is A Permission Failure Surfacing Part-Way Through A Multi-Gigabyte Synchronisation Or During An Update That Has Already Replaced Some Files
+if (WriteAccessGuard.FindUnwritableDirectory(installationDirectory) is string unwritableDirectory)
 {
-    logger.Log(LogCategory.Initialise, "COMPEL Requires Elevated Privileges To Run; The Match Server Manager Assigns Processor Affinity And Priority To Its Servers");
-    logger.Log(LogCategory.Initialise, OperatingSystem.IsWindows() ? "Start COMPEL As An Administrator" : @"Start COMPEL As Root (For Example Via ""sudo"")");
+    logger.Log(LogCategory.Guard, $@"COMPEL Cannot Write To ""{unwritableDirectory}""");
+    logger.Log(LogCategory.Guard, "The Distribution Synchronisation, The Log And Lock Files, And The Self-Update All Require Write Access To That Directory");
+    logger.Log(LogCategory.Guard, OperatingSystem.IsWindows() ? "Move COMPEL To A Directory The Host Account Can Write To, Then Start It Again" : "Grant The Account Running COMPEL Write Access To That Directory, Then Start It Again");
 
     return;
 }
