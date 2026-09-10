@@ -1066,6 +1066,22 @@ public sealed class ChallengeWindowTests
 
         await Assert.That(second.TryAdmit(5, out _)).IsTrue();
     }
+
+    // The Quota Sizes The Seen Set, So A Quota Of Zero Must Refuse Every Counter Rather Than Index An Empty Set; "ChallengeQuota.Derive" Yields Zero For A Non-Positive Interval
+    [Test]
+    public async Task A_Window_With_No_Quota_Refuses_Every_Counter()
+    {
+        ChallengeWindow window = new (challenge: 42, quota: 0);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(window.TryAdmit(0, out ChallengeAdmission atZero)).IsFalse();
+            await Assert.That(atZero).IsEqualTo(ChallengeAdmission.OverQuota);
+
+            await Assert.That(window.TryAdmit(ushort.MaxValue, out ChallengeAdmission atMaximum)).IsFalse();
+            await Assert.That(atMaximum).IsEqualTo(ChallengeAdmission.OverQuota);
+        }
+    }
 }
 ```
 
@@ -1256,6 +1272,8 @@ internal sealed class SessionChallengeState
 
     /// <summary>
     ///     Records a newly issued challenge, retaining the one it replaces.
+    ///     The caller must not issue a challenge equal to either of the two already held: a repeat would build a fresh window for that value and silently discard the counters the client has already consumed under it.
+    ///     A monotonic issuer satisfies this on its own, but a random one would not, so the reference checks a new challenge against its whole retained history before accepting it.
     /// </summary>
     internal void Rotate(uint challenge, ushort quota)
     {
@@ -1696,7 +1714,7 @@ git commit -m "Report Proxy Datagram Drops Through The Control Plane"
 ## Final Verification
 
 - [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
-- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 39 new tests across the six new units.
+- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 40 new tests across the six new units.
 - [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
 - [ ] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
 - [ ] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
