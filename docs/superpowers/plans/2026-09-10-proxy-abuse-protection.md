@@ -22,7 +22,8 @@
 - Acronyms and initialisms upper-case in PascalCase (`UDPForwarder`, `IPEndPoint`); in camelCase only when not leading.
 - Full words, never abbreviations: `configuration`, `maximum`, `duplicate`, `command`.
 - British English throughout code and comments.
-- Four spaces for indentation; CRLF line endings; every file ends with a newline.
+- Four spaces for indentation; every file ends with exactly one trailing newline and carries no byte-order mark.
+- Line endings: the repository's `.gitattributes` sets `* text=auto`, so git stores LF and checks out CRLF on Windows regardless of how a file is written. A working-tree file with LF endings is therefore **not** a finding - the stored blob is byte-identical either way, and `git diff` shows nothing. Do not spend a review round on it. The byte-order mark and the trailing newline are not normalised, so those two do matter.
 - Comments in StartCase; XML summaries in sentence case with terminating full stops.
 - Symbol references in comments in double quotation marks, or a `<see cref="..."/>` tag without parameters.
 - Never use the null-forgiving operator.
