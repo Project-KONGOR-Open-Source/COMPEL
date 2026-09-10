@@ -34,11 +34,7 @@ public sealed class UDPForwarderTests
             IPEndPoint publicEndPoint = new (IPAddress.Loopback, publicPort);
 
             // The Proxy Is No Longer A Transparent Relay: A Game Datagram Shorter Than The Reader's Minimum Is Dropped Unread, So The Probe Must Be Long Enough To Be Judged On Its Contents Rather Than Its Length
-            // Its Challenge And Counter Fields Are Left Zero, Which Is The Unauthenticated Case: Zero Never Matches An Issued Challenge Because "SendChallenge" Skips It, And A Zero Counter Is Within The Unauthenticated Allowance, So The Datagram Is Relayed
-            byte[] hello = new byte[ClientPacketReader.MinimumLength(ProxyForwarderKind.Game)];
-
-            Encoding.UTF8.GetBytes("HELLO").CopyTo(hello, 0);
-
+            // Its Challenge Field Is Left Zero, Which Is The Unauthenticated Case: Zero Never Matches An Issued Challenge Because "SendChallenge" Skips It
             byte[] pong = Encoding.UTF8.GetBytes("PONG");
 
             bool relayedToServer = false;
@@ -49,6 +45,12 @@ public sealed class UDPForwarderTests
             // Forcing A Challenge After The Session Exists Recovers A Dropped Initial Challenge
             for (int attempt = 0; attempt < 4 && (relayedToServer is false || relayedToClient is false || challenged is false); attempt++)
             {
+                // Each Attempt Carries A Fresh Counter, Because The Unauthenticated Window Admits Any Counter Only Once And A Byte-Identical Retry Would Be Refused As A Duplicate
+                byte[] hello = new byte[ClientPacketReader.MinimumLength(ProxyForwarderKind.Game)];
+
+                Encoding.UTF8.GetBytes("HELLO").CopyTo(hello, 0);
+                BinaryPrimitives.WriteUInt16LittleEndian(hello.AsSpan(ClientPacketReader.CounterOffset), (ushort)attempt);
+
                 await client.SendToAsync(hello, SocketFlags.None, publicEndPoint);
 
                 (byte[] Payload, EndPoint Sender)? fromServer = await TryReceive(server);

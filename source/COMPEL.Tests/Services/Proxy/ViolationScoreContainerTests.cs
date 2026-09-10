@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
-///     Verifies the per-source violation score: that a source within the expected packet rate is never actioned, that one above it or violating the checks is, that the score saturates and drains as the reference's does, and that a source which keeps pushing while actioned stays actioned for longer.
+///     Verifies the per-source violation score: that a source within the expected packet rate is never actioned, that one above it or violating the checks is, that the score saturates and drains as the reference's does, and that an actioned source recovers or stays actioned according to whether it keeps sending below or above that rate.
 /// </summary>
 public sealed class ViolationScoreContainerTests
 {
@@ -115,22 +115,48 @@ public sealed class ViolationScoreContainerTests
         await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
     }
 
-    // The Escalation Is What Makes A Persistent Source Expensive To Itself, And It Is The Reason The Maximum Is Separate From The Threshold
+    // The Actioned State Must Clear Itself For A Client Sending At A Normal Rate, Because The Proxy Drops Locally Rather Than Blocking The Traffic, So The Client Keeps Sending And Nothing Else Would Ever Clear It
     [Test]
-    public async Task An_Actioned_Source_That_Keeps_Sending_Climbs_Above_The_Threshold()
+    public async Task An_Actioned_Source_Sending_Below_The_Expected_Rate_Recovers()
     {
-        ViolationScoreContainer container = new (new ControllableTimeProvider());
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
 
         while (container.IsWithinAllowance(Source()))
             container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
 
-        int scoreWhenFirstActioned = container.Score(Source());
+        // Thirty Datagrams A Second Is Ordinary Game Traffic, Well Under The Expected Rate
+        for (int second = 0; second < 60; second++)
+        {
+            for (int packet = 0; packet < 30; packet++)
+                container.ChargeArrival(Source());
 
-        for (int packet = 0; packet < 100; packet++)
-            container.ChargeArrival(Source());
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
 
-        // Each Further Packet Costs Its Own Weight Plus The Actioned Weight, So A Hundred Of Them Climb By Far More Than A Hundred
-        await Assert.That(container.Score(Source())).IsGreaterThan(scoreWhenFirstActioned + (100 * ViolationScoreContainer.ActionedViolationWeight));
+        await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
+    }
+
+    [Test]
+    public async Task An_Actioned_Source_Sending_Above_The_Expected_Rate_Stays_Actioned()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        while (container.IsWithinAllowance(Source()))
+            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+
+        for (int second = 0; second < 60; second++)
+        {
+            for (int packet = 0; packet < ViolationScoreContainer.EstimatedPacketsPerSecond * 2; packet++)
+                container.ChargeArrival(Source());
+
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
+
+        await Assert.That(container.IsWithinAllowance(Source())).IsFalse();
     }
 
     [Test]
@@ -147,39 +173,6 @@ public sealed class ViolationScoreContainerTests
         int maximum = ViolationScoreContainer.MaximumViolationScore;
 
         await Assert.That(container.Score(Source())).IsEqualTo(maximum);
-    }
-
-    // Graduated Persistence: The Reason The Two Ceilings Are Separate Is That A Source Which Keeps Pushing Must Take Longer To Recover Than One Which Stops
-    [Test]
-    public async Task A_Source_That_Kept_Pushing_Takes_Longer_To_Recover_Than_One_That_Stopped()
-    {
-        ControllableTimeProvider clock = new ();
-        ViolationScoreContainer container = new (clock);
-
-        IPEndPoint stopped = Source(40000);
-        IPEndPoint persistent = Source(40001);
-
-        IPEndPoint[] sources = [stopped, persistent];
-
-        foreach (IPEndPoint source in sources)
-            while (container.IsWithinAllowance(source))
-                container.ChargeViolation(source, ViolationScoreContainer.RateLimitViolationWeight);
-
-        // Only The Persistent Source Keeps Sending While Actioned
-        for (int packet = 0; packet < 2000; packet++)
-            container.ChargeArrival(persistent);
-
-        for (int second = 0; second < 30; second++)
-        {
-            clock.Advance(OneSecond);
-            container.Drain();
-        }
-
-        using (Assert.Multiple())
-        {
-            await Assert.That(container.IsWithinAllowance(stopped)).IsTrue();
-            await Assert.That(container.IsWithinAllowance(persistent)).IsFalse();
-        }
     }
 
     [Test]
@@ -300,7 +293,7 @@ public sealed class ViolationScoreContainerTests
             ViolationScoreContainer.UnauthenticatedViolationWeight,
             ViolationScoreContainer.RateLimitViolationWeight,
             ViolationScoreContainer.DuplicateViolationWeight,
-            ViolationScoreContainer.ActionedViolationWeight,
+            ViolationScoreContainer.ChallengeViolationWeight,
             ViolationScoreContainer.PacketScore
         ];
 

@@ -10,7 +10,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     // "BAN_THRESHOLD": The Score Above Which A Source Is Acted Upon; Named For The Decision Rather Than Today's Action, Which Is A Drop
     internal const int ActionableThreshold = 4000;
 
-    // "MAX_WARN_COUNT": Where This Implementation Saturates Every Path. The Reference Bounds Only The Above-Threshold Escalation With It And Lets Its Own Count Climb Unbounded; Saturating Instead Keeps The Arithmetic In Range And Bounds The Worst Case To Roughly Two And A Half Minutes Of Drain, At The Cost Of A Flood's Penalty No Longer Growing With Its Duration
+    // "MAX_WARN_COUNT": Where This Implementation Saturates Accumulation. The Reference Applies This Bound Only To Its Above-Threshold Escalation And Lets Its Own Count Climb Unbounded; Saturating Keeps The Arithmetic In Range And Bounds The Worst Case To Roughly Two And A Half Minutes Of Drain At A Standstill
     internal const int MaximumViolationScore = 20000;
 
     // "ESTIMATED_PACKETS_PER_SECOND": The Packet Rate A Client Is Expected To Stay Under, Which Is Both The Score Drained Per Second And The Arrival Rate At Which A Source Breaks Even
@@ -31,8 +31,8 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     // "WARN_DUPE"
     internal const int DuplicateViolationWeight = 30;
 
-    // "WARN_BANNED": Charged For Every Datagram From A Source That Is Already Actioned, Which Is What Drives A Persistent Source Towards "MaximumViolationScore"
-    internal const int ActionedViolationWeight = 10;
+    // "WARN_CHALLENGE": A Challenge The Session Never Issued, Which The Reference Treats Separately From A Client That Has Not Been Challenged Yet
+    internal const int ChallengeViolationWeight = 100;
 
     // The Reference Drains Only Once More Than This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
     private static readonly TimeSpan MinimumDrainInterval = TimeSpan.FromMilliseconds(900);
@@ -47,10 +47,13 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     internal int TrackedSourceCount => scores.Count;
 
     /// <summary>
-    ///     Charges <paramref name="source"/> for the arrival of one datagram, whatever it contains, plus <see cref="ActionedViolationWeight"/> if that leaves it over <see cref="ActionableThreshold"/>.
+    ///     Charges <paramref name="source"/> for the arrival of one datagram, whatever it contains.
     ///     Called exactly once per datagram, before any check, so that a flood carrying no detectable violation is still scored.
+    ///     Nothing extra is charged for a source that is already actionable: the proxy drops locally rather than blocking the traffic, so an actioned client keeps sending, and charging it further would make the state permanent for any client above roughly a tenth of the expected rate.
+    ///     Recovery therefore depends on rate, which is what <see cref="EstimatedPacketsPerSecond"/> expresses: a source below it recovers, a source above it stays actioned.
     /// </summary>
-    internal void ChargeArrival(IPEndPoint source) => scores.AddOrUpdate(source, Arrived(0), static (_, score) => Arrived(score));
+    internal void ChargeArrival(IPEndPoint source)
+        => scores.AddOrUpdate(source, PacketScore, static (_, score) => Math.Min(score + PacketScore, MaximumViolationScore));
 
     /// <summary>
     ///     Charges <paramref name="weight"/> against <paramref name="source"/> for a specific violation, on top of the arrival already charged for the same datagram.
@@ -104,19 +107,5 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
             else
                 scores.TryUpdate(entry.Key, remaining, entry.Value);
         }
-    }
-
-    /// <summary>
-    ///     A source's score after one more datagram arrives.
-    /// </summary>
-    private static int Arrived(int score)
-    {
-        int arrived = score + PacketScore;
-
-        // A Source Already Over The Threshold Pays Extra For Every Further Datagram, Deliberately: The Reference Does This So That Enforcement Failing Elsewhere Still Leaves A Persistent Source Costed
-        if (arrived > ActionableThreshold)
-            arrived += ActionedViolationWeight;
-
-        return Math.Min(arrived, MaximumViolationScore);
     }
 }
