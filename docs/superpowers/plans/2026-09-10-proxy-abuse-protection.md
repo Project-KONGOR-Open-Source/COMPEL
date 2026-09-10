@@ -1326,21 +1326,25 @@ The existing `UDPForwarderTests` already relays over loopback; add to it.
     [Test]
     public async Task A_Short_Datagram_Is_Dropped_Rather_Than_Relayed()
     {
+        // "PublicPort" Is Whatever Was Passed In Rather Than The Port The Socket Ended Up Bound To, So It Must Be A Real Port Chosen Up Front, Exactly As The Other Tests In This File Do
+        int publicPort = FreeUDPPort();
+
         ViolationScoreContainer container = new (TimeProvider.System);
+
         using Socket server = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         server.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
         // The Null-Forgiving Operator Is Banned, And This File Already Has The Idiom For This
         int localPort = server.LocalEndPoint is IPEndPoint bound ? bound.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
 
-        using UDPForwarder forwarder = new (0, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, NullLogger.Instance);
+        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, NullLogger.Instance);
 
         using CancellationTokenSource cancellation = new (TimeSpan.FromSeconds(5));
 
         _ = forwarder.Run(cancellation.Token);
 
         using Socket client = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        client.SendTo(new byte[8], new IPEndPoint(IPAddress.Loopback, forwarder.PublicPort));
+        client.SendTo(new byte[8], new IPEndPoint(IPAddress.Loopback, publicPort));
 
         await Task.Delay(TimeSpan.FromMilliseconds(500), cancellation.Token);
 
