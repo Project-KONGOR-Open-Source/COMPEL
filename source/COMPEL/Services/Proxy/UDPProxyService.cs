@@ -20,6 +20,9 @@ public sealed class UDPProxyService : BackgroundService
 
     private readonly List<UDPForwarder> forwarders = new ();
 
+    // Shared Across Every Forwarder So A Single Source's Score Is The Same Regardless Of Which Public Port It Sends To; Not "IDisposable" And So Never Disposed Alongside The Forwarders
+    private readonly ViolationScoreContainer scoreContainer = new (TimeProvider.System);
+
     // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -58,8 +61,8 @@ public sealed class UDPProxyService : BackgroundService
 
         for (int instance = 0; instance < ports.Instances; instance++)
         {
-            TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, "Game");
-            TryAddForwarder(ports.PublicVoiceStart + instance, ports.LocalVoiceStart + instance, "Voice");
+            TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, ProxyForwarderKind.Game);
+            TryAddForwarder(ports.PublicVoiceStart + instance, ports.LocalVoiceStart + instance, ProxyForwarderKind.Voice);
         }
 
         if (forwarders.Count is 0)
@@ -105,11 +108,11 @@ public sealed class UDPProxyService : BackgroundService
         }
     }
 
-    private void TryAddForwarder(int publicPort, int localPort, string kind)
+    private void TryAddForwarder(int publicPort, int localPort, ProxyForwarderKind kind)
     {
         try
         {
-            forwarders.Add(new UDPForwarder(publicPort, localPort, logger));
+            forwarders.Add(new UDPForwarder(publicPort, localPort, kind, ChallengeRenewalInterval, scoreContainer, logger));
         }
 
         catch (Exception exception)
@@ -126,6 +129,8 @@ public sealed class UDPProxyService : BackgroundService
         {
             try { await Task.Delay(ChallengeRenewalInterval, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
+
+            scoreContainer.Drain();
 
             foreach (UDPForwarder forwarder in forwarders)
             {

@@ -16,31 +16,44 @@ internal sealed class UDPForwarder : IDisposable
     private const byte ProxyPacketFlag = 0x40;
     private const byte ChallengePacketType = 0x00;
 
-    // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge, And The Per-Challenge Packet Counters It Is Granted
-    // The Counters Are Maximised Because The Proxy Does Not Perform The Native Build's Rate-Based Cheat Detection; Renewal Well Within The Window Keeps The Client Authenticated Continuously
+    // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge
     private const ushort ChallengeExpirySeconds = 60;
-    private const ushort ChallengeMaximumCounter = ushort.MaxValue;
-    private const ushort ChallengeMaximumGameCommandCounter = ushort.MaxValue;
 
     private readonly IPEndPoint serverEndPoint;
+    private readonly ProxyForwarderKind kind;
+    private readonly ViolationScoreContainer scoreContainer;
     private readonly ILogger logger;
     private readonly Socket frontSocket;
     private readonly ConcurrentDictionary<IPEndPoint, ClientSession> sessions = new ();
+    private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = new ();
     private readonly Lock sessionsLock = new ();
 
     // The Client Accepts A Renewed Challenge Only When Its Value Differs From The Previous One And Its Timestamp Is Strictly Greater, So A Single Monotonically-Increasing Sequence Drives Both Fields
     private long challengeSequence;
 
+    private readonly ushort packetQuota;
+    private readonly ushort gameCommandQuota;
+
+    private int droppedDatagramCount;
+
     public int PublicPort { get; }
 
     public int LocalPort { get; }
 
-    public UDPForwarder(int publicPort, int localPort, ILogger logger)
+    public int DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
+
+    public UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, ILogger logger)
     {
         PublicPort = publicPort;
         LocalPort = localPort;
         serverEndPoint = new IPEndPoint(IPAddress.Loopback, localPort);
+        this.kind = kind;
+        this.scoreContainer = scoreContainer;
         this.logger = logger;
+
+        // The Interval Is Not Stored: It Is Only Needed To Derive The Two Quotas, Which Are Fixed For The Life Of The Forwarder
+        packetQuota = ChallengeQuota.ForKind(kind, challengeRenewalInterval);
+        gameCommandQuota = ChallengeQuota.GameCommandForInterval(challengeRenewalInterval);
 
         frontSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         DisableConnectionResetReporting(frontSocket);
@@ -84,9 +97,55 @@ internal sealed class UDPForwarder : IDisposable
 
             // Authenticate A New Client Immediately So It Does Not Exhaust Its Unauthenticated Packet Budget Waiting For The First Periodic Renewal
             if (created)
-                SendChallenge(client);
+                SendChallenge(client, session);
 
             session.Touch();
+
+            // Every Datagram Costs Its Source, Whatever It Turns Out To Contain, Which Is What The Drain Rate Is Calibrated Against; The Reference Does This First As Well
+            scoreContainer.ChargeArrival(client);
+
+            // A Source Already Over The Threshold Is Refused Before Anything Reads Its Datagram
+            if (scoreContainer.IsWithinAllowance(client) is false)
+            {
+                Drop(client, "Actioned");
+
+                continue;
+            }
+
+            ReadOnlySpan<byte> datagram = buffer.AsSpan(0, result.ReceivedBytes);
+
+            // The Length Guard Runs Before Any Field Is Read So None Is Ever Read Out Of Range
+            if (ClientPacketReader.TryRead(datagram, kind, out uint challenge, out ushort counter) is false)
+            {
+                Drop(client, ViolationScoreContainer.TooShortViolationWeight, "Too Short");
+
+                continue;
+            }
+
+            ChallengeWindow? window = session.Challenges.Match(challenge);
+
+            if (window is null)
+            {
+                // The Client Has Not Accepted A Challenge Yet, So It Is Held To The Unauthenticated Total Rather Than A Rate
+                if (counter >= ChallengeQuota.UnauthenticatedPacketQuota)
+                {
+                    Drop(client, ViolationScoreContainer.UnauthenticatedViolationWeight, "Unauthenticated");
+
+                    continue;
+                }
+            }
+
+            // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
+            else if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
+            {
+                int weight = admission is ChallengeAdmission.Duplicate
+                    ? ViolationScoreContainer.DuplicateViolationWeight
+                    : ViolationScoreContainer.RateLimitViolationWeight;
+
+                Drop(client, weight, admission.ToString());
+
+                continue;
+            }
 
             try { await session.UpstreamSocket.SendAsync(buffer.AsMemory(0, result.ReceivedBytes), SocketFlags.None, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
@@ -99,17 +158,20 @@ internal sealed class UDPForwarder : IDisposable
     /// </summary>
     public void ChallengeActiveSessions()
     {
-        foreach (IPEndPoint client in sessions.Keys)
-            SendChallenge(client);
+        foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+            SendChallenge(pair.Key, pair.Value);
     }
 
-    private void SendChallenge(IPEndPoint client)
+    private void SendChallenge(IPEndPoint client, ClientSession session)
     {
         uint sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
 
         // The Value Must Be Non-Zero, As Zero Marks An Unauthenticated Session On The Client; Skip It On The Rare Wrap-Around
         if (sequence is 0)
             sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+
+        // Rotation Must Happen Before The Challenge Is Sent, So A Reply Arriving The Instant After Send Is Already Matched
+        session.Challenges.Rotate(sequence, packetQuota);
 
         byte[] packet = BuildChallengePacket(sequence, sequence);
 
@@ -118,7 +180,7 @@ internal sealed class UDPForwarder : IDisposable
         catch (Exception exception) { logger.LogDebug(exception, "Failed To Send Challenge To {Client}", client); }
     }
 
-    private static byte[] BuildChallengePacket(uint serverCreationTimestamp, uint value)
+    private byte[] BuildChallengePacket(uint serverCreationTimestamp, uint value)
     {
         byte[] packet = new byte[WatermarkPrefixLength + 18];
 
@@ -132,11 +194,26 @@ internal sealed class UDPForwarder : IDisposable
 
         BinaryPrimitives.WriteUInt32LittleEndian(payload[4..], serverCreationTimestamp);
         BinaryPrimitives.WriteUInt16LittleEndian(payload[8..], ChallengeExpirySeconds);
-        BinaryPrimitives.WriteUInt16LittleEndian(payload[10..], ChallengeMaximumCounter);
-        BinaryPrimitives.WriteUInt16LittleEndian(payload[12..], ChallengeMaximumGameCommandCounter);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[10..], packetQuota);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[12..], gameCommandQuota);
         BinaryPrimitives.WriteUInt32LittleEndian(payload[14..], value);
 
         return packet;
+    }
+
+    private void Drop(IPEndPoint client, int weight, string reason)
+    {
+        scoreContainer.ChargeViolation(client, weight);
+
+        Drop(client, reason);
+    }
+
+    private void Drop(IPEndPoint client, string reason)
+    {
+        Interlocked.Increment(ref droppedDatagramCount);
+
+        if (reportedDrops.TryAdd(client, true))
+            logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
     }
 
     private ClientSession GetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out bool created)
@@ -254,6 +331,9 @@ internal sealed class UDPForwarder : IDisposable
         public Socket UpstreamSocket { get; }
 
         public CancellationTokenSource Cancellation { get; }
+
+        // Rotation And Matching Live In "SessionChallengeState" So The Renewal Grace Is Testable Outside This Private Class
+        public SessionChallengeState Challenges { get; } = new ();
 
         public long LastActivityTicks;
 
