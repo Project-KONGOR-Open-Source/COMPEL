@@ -14,6 +14,8 @@ internal sealed class SessionChallengeState
     internal const int RetainedChallengeCount = 6;
 
     // "CLEAR_UNAUTHENTICATED": Renewals Between Resets Of The Pre-Authentication Window, So Its Small Total Is A Recurring Allowance Rather Than A Once-Per-Session Budget
+    // The Reference Counts Its Own Five-Second Challenge Refreshes And Resets On Every Fourth, So Roughly Every Twenty-Four Seconds; Three Ten-Second Renewals Is Thirty, Deliberately A Little Stricter On A Path That Relays What It Admits
+    // The Quantity That Matters Is The Rate The Allowance Is Handed Out At, Not The Number Of Rotations, So This Is Not An Off-By-One Against The Reference's Count Of Refreshes
     internal const int UnauthenticatedResetRotations = 3;
 
     private readonly Lock stateLock = new ();

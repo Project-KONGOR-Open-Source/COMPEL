@@ -53,11 +53,7 @@ public sealed class SessionChallengeStateTests
         using (Assert.Multiple())
         {
             for (uint challenge = 1; challenge <= SessionChallengeState.RetainedChallengeCount; challenge++)
-            {
-                uint issued = challenge;
-
-                await Assert.That(state.Match(issued)).IsNotNull();
-            }
+                await Assert.That(state.Match(challenge)).IsNotNull();
         }
     }
 
