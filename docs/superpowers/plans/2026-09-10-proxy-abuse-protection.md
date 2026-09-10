@@ -1627,6 +1627,8 @@ Extend the existing TODO above `UDPProxyService` so the deferred checks are docu
 ```csharp
 // TODO: The Proxy Validates Datagram Length, The Per-Challenge Packet Quota, And Duplicate Counters, And Scores Abuse Per Source; It Does Not Yet Validate The Watermarks
 // TODO: The Reference Proxy Also Checks A Constant Per-Region Watermark And A Dynamic CRC32C One, Which Together Are Its Anti-Cheat Signal; Adding Them Needs A Region Setting COMPEL Has No Equivalent For, And Carries A Higher False-Positive Cost Than The Checks Above
+// TODO: Challenge Values Are A Monotonic Counter Rather Than The Reference's Cryptographically Random One, So They Are Guessable; A Source That Guesses One Is Held To The Per-Challenge Quota Instead Of The Much Smaller Unauthenticated One, And Watermark Validation Would Depend On Them Being Unpredictable
+// TODO: Making Them Random Means Separating The Challenge From The Creation Timestamp, Which Currently Share One Value In "BuildChallengePacket", So It Is Deliberately Left Alone Here Rather Than Changed On A Path That Works In Production
 ```
 
 - [ ] **Step 6: Build and test**
