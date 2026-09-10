@@ -1454,7 +1454,9 @@ with `private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = ne
 
 - [ ] **Step 5: Change the proxy service to pass the kind and the container**
 
-In `UDPProxyService`, add a `private readonly ViolationScoreContainer scoreContainer = new (TimeProvider.System);` field and call `scoreContainer.Drain();` once per iteration of `RunMaintenanceLoop`, so score drains on the cadence the container expects. The container is not `IDisposable` and must not be disposed alongside the forwarders. Then change the two calls to pass the enum, and change `TryAddForwarder`:
+In `UDPProxyService`, add a `private readonly ViolationScoreContainer scoreContainer = new (TimeProvider.System);` field and call `scoreContainer.Drain();` once per iteration of `RunMaintenanceLoop`. The container is not `IDisposable` and must not be disposed alongside the forwarders.
+
+**That loop ticks on `ChallengeRenewalInterval`, which is ten seconds, not one.** Do not change it, and do not add a second loop: the drain removes score in proportion to the time actually elapsed, so a ten-second pass removes ten seconds' worth and the result is the same as a one-second pass would give. This is the property that made a drain of a fixed amount per call unacceptable — a fixed 140 per pass on a ten-second tick would drain fourteen times too slowly, and a client sending at exactly the expected rate would accumulate about 1260 score every ten seconds and be actioned within about half a minute. The only cost of the slower tick is granularity: an actioned source stays actioned until the next pass. Then change the two calls to pass the enum, and change `TryAddForwarder`:
 
 ```csharp
             TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, ProxyForwarderKind.Game);
@@ -1542,49 +1544,60 @@ and in `ControlPlaneEndpoints.cs`, after the corresponding line:
 
 - [ ] **Step 4: Add the under-attack indicator**
 
-The reference keeps a global counter incremented per violation and reset periodically, so a broad attack is distinguishable from one misbehaving client. Confirm the constant first:
+The reference keeps a global counter raised on enforcement events and reset periodically, so a sustained attack is distinguishable from ordinary background noise. Confirm the constant and the reset first:
 
 ```bash
-grep -nE "define UNDER_ATTACK_THRESHOLD" "source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp"
+P="source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp"
+grep -nE "define UNDER_ATTACK_THRESHOLD" "$P"
+grep -n "under_attack_indicator" "$P"
+sed -n '1247,1254p' "$P"
 ```
 
-Expected: `UNDER_ATTACK_THRESHOLD 1000`.
+Expected: `UNDER_ATTACK_THRESHOLD 1000`; the indicator raised by varying amounts at many sites (`+= 100` for most enforcement events, `+= 10000` for one severe case, `++` and `+= 2` for lesser ones); and a reset to zero on the `++clearUnusedPlayers > 5 * 60` branch, logging the indicator first if it is over the threshold.
+
+**The reference's weights do not port and must not be copied.** They are attached to firewall bans, hardware-identifier bans and connection-table exhaustion — enforcement COMPEL deliberately does not implement, since its response is a local drop. COMPEL's single enforcement event is a refused datagram, so it carries the reference's lightest weight, one, and the threshold stays 1000: a thousand refusals inside one window. Keep the reference's five-minute window, because that is what the threshold was chosen against.
+
+This indicator answers "how much are we refusing", not "how many distinct sources are we refusing". One source that is already actioned and keeps sending can trip it on its own. That is accepted here rather than worked around: the score container knows which sources are actioned, so a distinct-source discriminator can be added later without changing this counter.
 
 In `UDPProxyService`, beside the existing fields:
 
 ```csharp
-    // "UNDER_ATTACK_THRESHOLD": Drops Within One Reset Window Above Which The Host Is Treated As Under Attack Rather Than Merely Refusing One Misbehaving Client
+    // "UNDER_ATTACK_THRESHOLD": Refusals Within One Window Above Which The Proxy Reports Itself Under Attack
     private const int UnderAttackThreshold = 1000;
 
-    private int dropsSinceReset;
+    // The Reference Resets Its Indicator Every Five Minutes Of Its Own Housekeeping Tick; Derived From The Interval Rather Than Written Down Twice, So It Stays Five Minutes If The Interval Changes
+    private static readonly int UnderAttackWindowPasses = (int) Math.Max(1, TimeSpan.FromMinutes(5).Ticks / ChallengeRenewalInterval.Ticks);
+
+    private int maintenancePassesThisWindow;
+    private int droppedDatagramsAtWindowStart;
     private bool isUnderAttack;
 
     /// <summary>
-    ///     Whether the proxy refused more datagrams in the last reset window than a single misbehaving client could account for.
+    ///     Whether the proxy refused more datagrams in the last completed window than the under-attack threshold allows.
     /// </summary>
     public bool IsUnderAttack => Volatile.Read(ref isUnderAttack);
 ```
 
-In `RunMaintenanceLoop`, alongside the `scoreContainer.Drain();` call added in Task 5, sample the aggregate drop count and reset the window every five minutes, matching the reference's cadence:
+In `RunMaintenanceLoop`, alongside the `scoreContainer.Drain();` call added in Task 5, close the window once enough passes have elapsed and judge the refusals counted in it:
 
 ```csharp
-            int drops = DroppedDatagramCount;
-            int dropsThisWindow = drops - Interlocked.Exchange(ref dropsSinceReset, drops);
-
-            if (dropsThisWindow > UnderAttackThreshold)
+            if (++maintenancePassesThisWindow >= UnderAttackWindowPasses)
             {
-                Volatile.Write(ref isUnderAttack, true);
+                maintenancePassesThisWindow = 0;
 
-                logger.LogWarning("The Proxy Refused {Drops} Datagram(s) Recently, Which Exceeds The Under-Attack Threshold Of {Threshold}", dropsThisWindow, UnderAttackThreshold);
-            }
+                int droppedDatagrams = DroppedDatagramCount;
+                int droppedThisWindow = droppedDatagrams - droppedDatagramsAtWindowStart;
 
-            else
-            {
-                Volatile.Write(ref isUnderAttack, false);
+                droppedDatagramsAtWindowStart = droppedDatagrams;
+
+                Volatile.Write(ref isUnderAttack, droppedThisWindow > UnderAttackThreshold);
+
+                if (droppedThisWindow > UnderAttackThreshold)
+                    logger.LogWarning("The Proxy Refused {DroppedDatagrams} Datagram(s) In The Last Window, Which Exceeds The Under-Attack Threshold Of {Threshold}", droppedThisWindow, UnderAttackThreshold);
             }
 ```
 
-Sampling the aggregate rather than incrementing per drop keeps the datagram path free of another shared counter.
+Only the maintenance loop touches the window counters, so they need no interlocking; `isUnderAttack` is written with `Volatile` because the control plane reads it from another thread. Sampling the aggregate count rather than incrementing per refusal keeps the datagram path free of another shared counter.
 - [ ] **Step 5: Record the deferred work**
 
 Extend the existing TODO above `UDPProxyService` so the deferred checks are documented where the next reader will look:
