@@ -1369,7 +1369,6 @@ Replace the three quota constants with values derived per kind, and store the ki
 
 ```csharp
     private readonly ProxyForwarderKind kind;
-    private readonly TimeSpan challengeRenewalInterval;
     private readonly ViolationScoreContainer scoreContainer;
     private readonly ushort packetQuota;
     private readonly ushort gameCommandQuota;
@@ -1383,9 +1382,9 @@ Set them in the constructor, after the existing assignments:
 
 ```csharp
         this.kind = kind;
-        this.challengeRenewalInterval = challengeRenewalInterval;
         this.scoreContainer = scoreContainer;
 
+        // The Interval Is Not Stored: It Is Only Needed To Derive The Two Quotas, Which Are Fixed For The Life Of The Forwarder
         packetQuota = ChallengeQuota.ForKind(kind, challengeRenewalInterval);
         gameCommandQuota = ChallengeQuota.GameCommandForInterval(challengeRenewalInterval);
 ```
