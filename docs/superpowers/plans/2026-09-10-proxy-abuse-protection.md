@@ -2034,10 +2034,30 @@ internal sealed class SessionChallengeState
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
 Expected: build succeeds with 0 warnings; all tests pass.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Fix the retry loop this task breaks**
+
+Making challenge zero a real window gives the unauthenticated path a duplicate check, which silently defeats a retry loop. `A_Datagram_Is_Relayed_To_The_Server_And_The_Reply_Is_Relayed_Back_To_The_Client` sends a byte-identical datagram up to four times, and its comment says the retry exists to tolerate an occasional loopback drop; after this change attempts two through four are refused as duplicates. The test still passes when the first attempt gets through, so the failure mode is a lost tolerance rather than a red test, which is worse.
+
+Change `ChallengeOffset` and `CounterOffset` in `ClientPacketReader.cs` from `private` to `internal` — the test needs the reader's own offsets rather than a second copy of them — and build the probe inside the loop with a per-attempt counter:
+
+```csharp
+            for (int attempt = 0; attempt < 4 && (relayedToServer is false || relayedToClient is false || challenged is false); attempt++)
+            {
+                // Each Attempt Carries A Fresh Counter, Because The Unauthenticated Window Admits Any Counter Only Once And A Byte-Identical Retry Would Be Refused As A Duplicate
+                byte[] hello = new byte[ClientPacketReader.MinimumLength(ProxyForwarderKind.Game)];
+
+                Encoding.UTF8.GetBytes("HELLO").CopyTo(hello, 0);
+                BinaryPrimitives.WriteUInt16LittleEndian(hello.AsSpan(ClientPacketReader.CounterOffset), (ushort)attempt);
+
+                await client.SendToAsync(hello, SocketFlags.None, publicEndPoint);
+```
+
+The two lines that previously built `hello` before the loop go away; the rest of the body is unchanged, and `SequenceEqual(hello)` still compares against the datagram this attempt sent.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add source/COMPEL/Services/Proxy/ViolationScoreContainer.cs source/COMPEL/Services/Proxy/SessionChallengeState.cs source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs source/COMPEL.Tests/Services/Proxy/SessionChallengeStateTests.cs
+git add source/COMPEL/Services/Proxy/ViolationScoreContainer.cs source/COMPEL/Services/Proxy/SessionChallengeState.cs source/COMPEL/Services/Proxy/ClientPacketReader.cs source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs source/COMPEL.Tests/Services/Proxy/SessionChallengeStateTests.cs source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs
 git commit -m "Let An Actioned Source Recover And Retain More Challenges"
 ```
 
@@ -2080,6 +2100,8 @@ Expected: the `if (*challenge == 0)` branch capping the counter at `MAX_CTR_UNAU
 - [ ] **Step 2: Expose the two offsets the tests need**
 
 In `ClientPacketReader.cs`, change `ChallengeOffset` and `CounterOffset` from `private` to `internal`, leaving the comment above them as it is. The forwarder tests build datagrams the reader must parse, so they need the same two offsets; writing `28` and `32` into the test file instead would reintroduce exactly the drift this class exists to prevent.
+
+Task 7 needs the same change for the same reason and may already have made it, in which case this step is a no-op — check before editing.
 
 - [ ] **Step 3: Write the failing ordering tests**
 
