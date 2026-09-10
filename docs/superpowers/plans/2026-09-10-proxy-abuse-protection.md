@@ -6,7 +6,7 @@
 
 **Architecture:** Each datagram passes an ordered pipeline before it is relayed: a length guard, then a read of the client-supplied challenge and counter, then per-challenge quota and duplicate checks, then a per-source decaying violation score. The score container owns one framework token limiter per source, replenished explicitly by the proxy's existing maintenance loop; everything else is a small pure unit with its own tests. Nothing in the pipeline awaits.
 
-**Tech Stack:** .NET 11, ASP.NET Core with Native AOT, `System.Threading.RateLimiting` (already in the shared framework), TUnit on the Microsoft Testing Platform.
+**Tech Stack:** .NET 11, ASP.NET Core with Native AOT, TUnit on the Microsoft Testing Platform. No new package is referenced: `ConcurrentDictionary` and `TimeProvider` are both core.
 
 **Spec:** `docs/superpowers/specs/2026-09-10-proxy-abuse-protection-design.md`
 
@@ -15,8 +15,9 @@
 - **Every task starts with its Fact Verification step.** Do not write code for a task until its cited reference lines have been re-read and confirmed. If a citation does not say what the plan claims, stop and report rather than proceeding.
 - Reference implementation: `source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp`.
 - **Ordering is a safety property:** the quota check must precede the duplicate check. The counter is client-controlled up to 65535 while the duplicate bitmap is sized to the quota, so the reverse order indexes out of bounds.
-- **No violation weight may exceed `ActionableThreshold`.** A permit count above the container limit throws rather than failing to acquire.
-- Only synchronous `AttemptAcquire` with `QueueLimit = 0`. The datagram loop must never await a limiter.
+- **No violation weight may exceed `ActionableThreshold`.** A weight at or above the threshold would action a source on a single anomaly, which is what the weighting exists to prevent.
+- **The score accumulates and saturates; it never refuses a charge.** `ActionableThreshold` (4000) is where a source starts being acted upon and `MaximumViolationScore` (20000) is where the score stops climbing. Collapsing the two loses the reference's graduated persistence.
+- The datagram path must never await, and must not allocate per datagram: pass state to the `ConcurrentDictionary` factory overloads rather than capturing it in a lambda.
 - Never use `var`; always explicit type names.
 - Acronyms and initialisms upper-case in PascalCase (`UDPForwarder`, `IPEndPoint`); in camelCase only when not leading.
 - Full words, never abbreviations: `configuration`, `maximum`, `duplicate`, `command`.
@@ -382,121 +383,352 @@ git commit -m "Read The Challenge And Counter From A Client Datagram"
 
 **Files:**
 - Create: `source/COMPEL/Services/Proxy/ViolationScoreContainer.cs`
-- Modify: `source/COMPEL/Internals/UsingDirectives.cs`
+- Create: `source/COMPEL.Tests/Services/Proxy/ControllableTimeProvider.cs`
 - Test: `source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `ViolationScoreContainer` with a parameterless constructor, `void Charge(IPEndPoint source, int weight)`, `bool IsWithinAllowance(IPEndPoint source)`, `void Replenish()`, `void Dispose()`, and the constants `ActionableThreshold`, `EstimatedPacketsPerSecond`, `TooShortViolationWeight`, `UnauthenticatedViolationWeight`, `RateLimitViolationWeight`, `DuplicateViolationWeight`.
+- Produces: `ViolationScoreContainer(TimeProvider timeProvider)` with `void ChargeArrival(IPEndPoint source)`, `void ChargeViolation(IPEndPoint source, int weight)`, `bool IsWithinAllowance(IPEndPoint source)`, `int Score(IPEndPoint source)`, `int TrackedSourceCount`, `void Drain()`, and the constants `ActionableThreshold`, `MaximumViolationScore`, `EstimatedPacketsPerSecond`, `PacketScore`, `TooShortViolationWeight`, `UnauthenticatedViolationWeight`, `RateLimitViolationWeight`, `DuplicateViolationWeight`, `ActionedViolationWeight`.
+- The container is **not** `IDisposable`: it holds no unmanaged resource. Do not wrap it in `using`.
 
-**API constraint, verified against the reference assembly:** `PartitionedRateLimiter.Create` has **no** `TimeProvider` overload, and the partitioned wrapper exposes no way to drive replenishment. The container therefore owns one `TokenBucketRateLimiter` per source with `AutoReplenishment = false`, and `Replenish()` is called once per second by the proxy service's existing maintenance loop. This matches the reference's explicit one-second housekeeping pass and makes the drain deterministically testable without waiting on wall-clock time.
+**Why this is not built on `System.Threading.RateLimiting`.** A token container looks like the dual of accumulate-and-decay, and it was the first choice, but three measured properties of `TokenBucketRateLimiter` make it unable to express this model. All three were verified against `System.Threading.RateLimiting` 11.0.0.0 as loaded from `Microsoft.AspNetCore.App/11.0.0-preview.7`, which is what a `net11.0` target resolves:
 
-`IsWithinAllowance` reads `GetStatistics().CurrentAvailablePermits` and consumes nothing. It exists because `AttemptAcquire` with a permit count of zero always succeeds, so a zero-weight charge could not have been used to test the threshold.
+- `AttemptAcquire` is all-or-nothing. A charge larger than the remaining permits fails and consumes nothing, where the reference always accumulates. Measured on a complete token-bucket implementation of this very component: after 400 duplicate-weight charges — a reference score of 12000, three times the threshold — the source was still within its allowance, parked indefinitely at 10 permits. Any weight that does not divide the threshold exactly lets a source sit just below it and never be actioned.
+- The counter cannot exceed `TokenLimit`, so `MaximumViolationScore` is unrepresentable and the above-threshold escalation has nowhere to go.
+- `TryReplenish` scales what it restores by real elapsed time (with a 1 ms period and 140 tokens per period, one call after 1000 ms restored the full 4000), `ReplenishmentPeriod` is rejected at `TimeSpan.Zero`, a one-tick period restores the whole limit even in a tight loop, and no `TimeProvider` exists on `TokenBucketRateLimiterOptions`.
+
+What remains is a weighted score with linear decay, which the framework has no primitive for. It is implemented directly over a `ConcurrentDictionary<IPEndPoint, int>` with an injected `TimeProvider`, which matches the reference exactly and is deterministic under test.
+
+**Two operations, not one.** The reference charges a source twice per datagram in the general case, and the two are kept separate here so neither is applied twice:
+
+- `ChargeArrival` is the unconditional per-packet cost (`main.cpp:534`, `++(*warn)`), plus `ActionedViolationWeight` when the source is already over the threshold (`main.cpp:542-543`). Called exactly once per datagram.
+- `ChargeViolation` adds a specific violation's weight. Called at most once per datagram, only when a check fails.
+
+**The per-packet cost is what gives the drain rate its meaning.** `ESTIMATED_PACKETS_PER_SECOND` is documented in the reference as the rate a client is expected to stay under, and it is both the per-second drain and the break-even arrival rate: a source at or below 140 packets a second nets zero, one above it accumulates with no violation at all. A design that scored violations alone would leave a well-behaved source permanently at zero and make the drain rate arbitrary.
 
 - [ ] **Step 1: Fact verification**
 
 ```bash
 cd "source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy"
-grep -nE "define (BAN_THRESHOLD|MAX_WARN_COUNT|ESTIMATED_PACKETS_PER_SECOND|WARN_TOO_SHORT|WARN_UNAUTHENTICATED|WARN_LIMIT|WARN_DUPE)" main.cpp
-sed -n '1183,1193p' main.cpp
+grep -nE "define (BAN_THRESHOLD|MAX_WARN_COUNT|ESTIMATED_PACKETS_PER_SECOND|WARN_TOO_SHORT|WARN_UNAUTHENTICATED|WARN_LIMIT|WARN_DUPE|WARN_BANNED)" main.cpp
+sed -n '532,545p' main.cpp
+sed -n '1175,1193p' main.cpp
 ```
 
-Expected: threshold 4000; maximum 20000; drain 140 per second; weights 200 (too short), 200 (unauthenticated), 100 (rate limit), 30 (duplicate); and the decay loop subtracting `elapsed_milliseconds * ESTIMATED_PACKETS_PER_SECOND / 1000.0f`. Confirm every weight is below the threshold, because a weight above it would throw on the datagram path.
+Expected, and every one of these is load-bearing for the code below:
 
-- [ ] **Step 2: Add the global using directive**
+- threshold 4000; maximum 20000; drain 140 per second; weights 200 (too short), 200 (unauthenticated), 100 (rate limit), 30 (duplicate), 10 (banned).
+- `verify` opens with `++(*warn);`, unconditionally, before any check — the per-packet cost.
+- immediately after it, `if (*warn > BAN_THRESHOLD)` and, nested inside, `if (*warn < MAX_WARN_COUNT) { (*warn) += WARN_BANNED; }` — the above-threshold escalation, with the reference's own comment explaining it is deliberate.
+- the housekeeping loop gated on `elapsed_milliseconds > 900`, subtracting `elapsed_milliseconds * ESTIMATED_PACKETS_PER_SECOND / 1000.0f` and flooring at zero — a drain proportional to elapsed time, not a fixed amount.
 
-In `source/COMPEL/Internals/UsingDirectives.cs`, insert in lexicographic order within the existing `System` group, immediately after the `global using System.Text.Json.Serialization;` line if present, otherwise after the last `System.T*` line:
+Confirm every violation weight is below the threshold: a weight at or above it would action a source on a single anomaly, which is what the weighting exists to prevent.
 
-```csharp
-global using System.Threading.RateLimiting;
-```
+- [ ] **Step 2: Write the controllable time provider**
 
-- [ ] **Step 3: Write the failing tests**
-
-Replenishment is explicit, so the drain is driven by calling `Replenish()` rather than by waiting.
+The drain is proportional to elapsed time, so the tests move the clock rather than waiting on it. `TimeProvider.GetElapsedTime` is built on `GetTimestamp` and `TimestampFrequency`, so overriding those two is enough and no test package is needed.
 
 ```csharp
 namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
-///     Verifies the per-source violation score: that ordinary traffic never reaches the actionable threshold, that abusive traffic does, and that a source recovers as its score drains.
+///     A time provider whose clock only moves when a test moves it, so behaviour proportional to elapsed time can be asserted exactly rather than waited for.
+/// </summary>
+internal sealed class ControllableTimeProvider : TimeProvider
+{
+    private long timestamp;
+
+    /// <summary>
+    ///     Timestamps are counted in ticks, so an advance of a given interval moves the clock by exactly that interval.
+    /// </summary>
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override long GetTimestamp() => timestamp;
+
+    internal void Advance(TimeSpan interval) => timestamp += interval.Ticks;
+}
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+```csharp
+namespace COMPEL.Tests.Services.Proxy;
+
+/// <summary>
+///     Verifies the per-source violation score: that a source within the expected packet rate is never actioned, that one above it or violating the checks is, that the score saturates and drains as the reference's does, and that a source which keeps pushing while actioned stays actioned for longer.
 /// </summary>
 public sealed class ViolationScoreContainerTests
 {
+    private static readonly TimeSpan OneSecond = TimeSpan.FromSeconds(1);
+
     private static IPEndPoint Source(int port = 40000) => new (IPAddress.Parse("203.0.113.5"), port);
 
     // The Most Important Test In The Suite: A Client At The Expected Packet Rate Must Never Be Actioned, Because A False Positive Drops A Legitimate Player Mid-Match
     [Test]
-    public async Task A_Source_At_The_Expected_Rate_Is_Never_Actioned()
+    public async Task A_Source_At_The_Expected_Packet_Rate_Is_Never_Actioned()
     {
-        using ViolationScoreContainer container = new ();
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
 
-        bool everRefused = false;
+        bool everActioned = false;
 
-        // Sixty Seconds Of Traffic At The Rate The Drain Is Sized For, Charged One Rate-Limit Weight Per Second
+        // Sixty Seconds Of Traffic At Exactly The Rate The Drain Is Sized For
         for (int second = 0; second < 60; second++)
         {
-            container.Charge(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+            for (int packet = 0; packet < ViolationScoreContainer.EstimatedPacketsPerSecond; packet++)
+            {
+                container.ChargeArrival(Source());
 
-            if (container.IsWithinAllowance(Source()) is false)
-                everRefused = true;
+                if (container.IsWithinAllowance(Source()) is false)
+                    everActioned = true;
+            }
 
-            container.Replenish();
+            clock.Advance(OneSecond);
+            container.Drain();
         }
 
-        await Assert.That(everRefused).IsFalse();
+        await Assert.That(everActioned).IsFalse();
+    }
+
+    // The Per-Packet Cost Exists So That A Flood Carrying No Detectable Violation Is Still Scored
+    [Test]
+    public async Task A_Source_Above_The_Expected_Packet_Rate_Is_Eventually_Actioned()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        // Twice The Expected Rate Nets One Drain's Worth Of Score Per Second, So The Threshold Is Crossed In Well Under Two Minutes
+        for (int second = 0; second < 120; second++)
+        {
+            for (int packet = 0; packet < ViolationScoreContainer.EstimatedPacketsPerSecond * 2; packet++)
+                container.ChargeArrival(Source());
+
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
+
+        await Assert.That(container.IsWithinAllowance(Source())).IsFalse();
     }
 
     [Test]
     public async Task A_Source_Well_Above_The_Threshold_Is_Actioned()
     {
-        using ViolationScoreContainer container = new ();
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
 
-        bool refused = false;
+        bool actioned = false;
 
-        // Nothing Is Replenished, So The Allowance Is Exhausted
+        // Nothing Is Drained, So The Score Only Climbs
         for (int attempt = 0; attempt < 200; attempt++)
         {
-            container.Charge(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeArrival(Source());
+            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
 
             if (container.IsWithinAllowance(Source()) is false)
             {
-                refused = true;
+                actioned = true;
 
                 break;
             }
         }
 
-        await Assert.That(refused).IsTrue();
+        await Assert.That(actioned).IsTrue();
+    }
+
+    // A Regression Test For An All-Or-Nothing Charge: A Weight That Does Not Divide The Threshold Exactly Must Still Accumulate, Or A Source Can Park Just Below The Threshold Indefinitely
+    [Test]
+    public async Task A_Weight_That_Does_Not_Divide_The_Threshold_Still_Accumulates()
+    {
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
+
+        for (int attempt = 0; attempt < 400; attempt++)
+            container.ChargeViolation(Source(), ViolationScoreContainer.DuplicateViolationWeight);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(container.IsWithinAllowance(Source())).IsFalse();
+            await Assert.That(container.Score(Source())).IsGreaterThan(ViolationScoreContainer.ActionableThreshold);
+        }
     }
 
     [Test]
     public async Task An_Actioned_Source_Recovers_After_Draining()
     {
-        using ViolationScoreContainer container = new ();
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
 
         while (container.IsWithinAllowance(Source()))
-            container.Charge(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
 
-        // A Minute Of Drain At The Configured Rate Is Far More Than The Threshold, So The Source Must Be Clear Again
+        // A Minute Of Drain At The Configured Rate Is Far More Than The Threshold, So A Source That Stops Must Be Clear Again
         for (int second = 0; second < 60; second++)
-            container.Replenish();
+        {
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
 
         await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
+    }
+
+    // The Escalation Is What Makes A Persistent Source Expensive To Itself, And It Is The Reason The Maximum Is Separate From The Threshold
+    [Test]
+    public async Task An_Actioned_Source_That_Keeps_Sending_Climbs_Above_The_Threshold()
+    {
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
+
+        while (container.IsWithinAllowance(Source()))
+            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+
+        int scoreWhenFirstActioned = container.Score(Source());
+
+        for (int packet = 0; packet < 100; packet++)
+            container.ChargeArrival(Source());
+
+        // Each Further Packet Costs Its Own Weight Plus The Actioned Weight, So A Hundred Of Them Climb By Far More Than A Hundred
+        await Assert.That(container.Score(Source())).IsGreaterThan(scoreWhenFirstActioned + (100 * ViolationScoreContainer.ActionedViolationWeight));
+    }
+
+    [Test]
+    public async Task The_Score_Saturates_At_The_Maximum()
+    {
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
+
+        for (int attempt = 0; attempt < 1000; attempt++)
+        {
+            container.ChargeArrival(Source());
+            container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+        }
+
+        int maximum = ViolationScoreContainer.MaximumViolationScore;
+
+        await Assert.That(container.Score(Source())).IsEqualTo(maximum);
+    }
+
+    // Graduated Persistence: The Reason The Two Ceilings Are Separate Is That A Source Which Keeps Pushing Must Take Longer To Recover Than One Which Stops
+    [Test]
+    public async Task A_Source_That_Kept_Pushing_Takes_Longer_To_Recover_Than_One_That_Stopped()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        IPEndPoint stopped = Source(40000);
+        IPEndPoint persistent = Source(40001);
+
+        IPEndPoint[] sources = [stopped, persistent];
+
+        foreach (IPEndPoint source in sources)
+            while (container.IsWithinAllowance(source))
+                container.ChargeViolation(source, ViolationScoreContainer.RateLimitViolationWeight);
+
+        // Only The Persistent Source Keeps Sending While Actioned
+        for (int packet = 0; packet < 2000; packet++)
+            container.ChargeArrival(persistent);
+
+        for (int second = 0; second < 30; second++)
+        {
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(container.IsWithinAllowance(stopped)).IsTrue();
+            await Assert.That(container.IsWithinAllowance(persistent)).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task A_Drain_Removes_Score_In_Proportion_To_Elapsed_Time()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        container.Drain();
+
+        int afterOneSecond = container.Score(Source());
+
+        container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+        container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        container.Drain();
+
+        using (Assert.Multiple())
+        {
+            // 200 Charged, 140 Drained
+            await Assert.That(afterOneSecond).IsEqualTo(60);
+
+            // 60 Carried Over Plus 400 Charged, Less Two Seconds Of Drain
+            await Assert.That(container.Score(Source())).IsEqualTo(180);
+        }
+    }
+
+    // The Reference Waits For Enough Elapsed Time Rather Than Draining A Partial Amount, And Must Not Discard The Remainder When It Does
+    [Test]
+    public async Task A_Drain_Before_The_Minimum_Interval_Does_Nothing_And_Keeps_The_Remainder()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        container.Drain();
+
+        int afterHalfASecond = container.Score(Source());
+
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        container.Drain();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(afterHalfASecond).IsEqualTo(ViolationScoreContainer.TooShortViolationWeight);
+            await Assert.That(container.Score(Source())).IsEqualTo(60);
+        }
+    }
+
+    [Test]
+    public async Task A_Source_Drained_To_Zero_Is_Forgotten()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        container.ChargeViolation(Source(), ViolationScoreContainer.DuplicateViolationWeight);
+
+        clock.Advance(OneSecond);
+        container.Drain();
+
+        await Assert.That(container.TrackedSourceCount).IsEqualTo(0);
+    }
+
+    // Reading A Source's Standing Happens For Every Datagram, So It Must Not Cause The Source To Be Tracked
+    [Test]
+    public async Task An_Unknown_Source_Is_Within_Allowance_And_Is_Not_Tracked()
+    {
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
+            await Assert.That(container.Score(Source())).IsEqualTo(0);
+            await Assert.That(container.TrackedSourceCount).IsEqualTo(0);
+        }
     }
 
     [Test]
     public async Task Sources_Are_Scored_Independently()
     {
-        using ViolationScoreContainer container = new ();
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
 
         while (container.IsWithinAllowance(Source(40000)))
-            container.Charge(Source(40000), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeViolation(Source(40000), ViolationScoreContainer.RateLimitViolationWeight);
 
         await Assert.That(container.IsWithinAllowance(Source(40001))).IsTrue();
     }
 
-    // A Weight Above The Threshold Would Throw Rather Than Refuse, So No Weight May Ever Exceed It
+    // A Weight At Or Above The Threshold Would Action A Source On A Single Anomaly, Which Is What The Weighting Exists To Prevent
     [Test]
     public async Task Every_Weight_Is_Below_The_Actionable_Threshold()
     {
@@ -505,7 +737,9 @@ public sealed class ViolationScoreContainerTests
             ViolationScoreContainer.TooShortViolationWeight,
             ViolationScoreContainer.UnauthenticatedViolationWeight,
             ViolationScoreContainer.RateLimitViolationWeight,
-            ViolationScoreContainer.DuplicateViolationWeight
+            ViolationScoreContainer.DuplicateViolationWeight,
+            ViolationScoreContainer.ActionedViolationWeight,
+            ViolationScoreContainer.PacketScore
         ];
 
         using (Assert.Multiple())
@@ -519,16 +753,24 @@ public sealed class ViolationScoreContainerTests
     }
 
     [Test]
+    public async Task The_Maximum_Is_Above_The_Actionable_Threshold()
+    {
+        int maximum = ViolationScoreContainer.MaximumViolationScore;
+
+        await Assert.That(maximum).IsGreaterThan(ViolationScoreContainer.ActionableThreshold);
+    }
+
+    [Test]
     public async Task A_Single_Violation_Of_Any_Weight_Never_Actions_A_Source()
     {
-        using ViolationScoreContainer container = new ();
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
 
         using (Assert.Multiple())
         {
-            container.Charge(Source(41000), ViolationScoreContainer.TooShortViolationWeight);
-            container.Charge(Source(41001), ViolationScoreContainer.UnauthenticatedViolationWeight);
-            container.Charge(Source(41002), ViolationScoreContainer.RateLimitViolationWeight);
-            container.Charge(Source(41003), ViolationScoreContainer.DuplicateViolationWeight);
+            container.ChargeViolation(Source(41000), ViolationScoreContainer.TooShortViolationWeight);
+            container.ChargeViolation(Source(41001), ViolationScoreContainer.UnauthenticatedViolationWeight);
+            container.ChargeViolation(Source(41002), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeViolation(Source(41003), ViolationScoreContainer.DuplicateViolationWeight);
 
             await Assert.That(container.IsWithinAllowance(Source(41000))).IsTrue();
             await Assert.That(container.IsWithinAllowance(Source(41001))).IsTrue();
@@ -538,8 +780,6 @@ public sealed class ViolationScoreContainerTests
     }
 }
 ```
-
-No new package is required: replenishment is explicit, so no fake time source is needed.
 
 - [ ] **Step 4: Run the tests to verify they fail**
 
@@ -552,17 +792,23 @@ Expected: FAIL — `ViolationScoreContainer` does not exist.
 namespace COMPEL.Services.Proxy;
 
 /// <summary>
-///     Scores abusive behaviour per source address and reports when a source has exhausted its allowance.
-///     Violations consume a source's allowance and the allowance refills when <see cref="Replenish"/> is called, which reproduces the reference proxy's accumulate-and-decay model: a source behaving normally never runs out, while one misbehaving does and recovers only once it stops.
+///     Scores abusive behaviour per source address and reports when a source's score is high enough to act upon.
+///     Every datagram costs its source a little, every violation costs its weight on top, and a drain proportional to elapsed time removes score again, which reproduces the reference proxy's accumulate-and-decay model: a source within the expected packet rate never accumulates, while one above it does and recovers only once it stops.
 ///     No state is persisted and nothing is attributed to an account, because at this layer there is only an address and a datagram.
 /// </summary>
-internal sealed class ViolationScoreContainer : IDisposable
+internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
 {
-    // "BAN_THRESHOLD": The Score At Which A Source Is Acted Upon; Named For The Decision Rather Than Today's Action, Which Is A Drop
+    // "BAN_THRESHOLD": The Score Above Which A Source Is Acted Upon; Named For The Decision Rather Than Today's Action, Which Is A Drop
     internal const int ActionableThreshold = 4000;
 
-    // "ESTIMATED_PACKETS_PER_SECOND": How Much Of A Source's Allowance Is Restored By Each Replenishment
+    // "MAX_WARN_COUNT": Where Accumulation Saturates; Five Times The Threshold, So A Source That Keeps Pushing Stays Actioned Well After It Stops
+    internal const int MaximumViolationScore = 20000;
+
+    // "ESTIMATED_PACKETS_PER_SECOND": The Packet Rate A Client Is Expected To Stay Under, Which Is Both The Score Drained Per Second And The Arrival Rate At Which A Source Breaks Even
     internal const int EstimatedPacketsPerSecond = 140;
+
+    // Every Datagram Costs This Much Before Any Violation Weight, Which Is What Makes The Drain Rate Meaningful: A Source Sending Faster Than "EstimatedPacketsPerSecond" Accumulates Without Violating Anything
+    internal const int PacketScore = 1;
 
     // "WARN_TOO_SHORT"
     internal const int TooShortViolationWeight = 200;
@@ -576,60 +822,89 @@ internal sealed class ViolationScoreContainer : IDisposable
     // "WARN_DUPE"
     internal const int DuplicateViolationWeight = 30;
 
-    // One Limiter Per Source, Rather Than A "PartitionedRateLimiter", Because The Partitioned Wrapper Offers No Way To Drive Replenishment And Its Factory Has No Time Provider Overload
-    private readonly ConcurrentDictionary<IPEndPoint, TokenBucketRateLimiter> limiters = new ();
+    // "WARN_BANNED": Charged For Every Datagram From A Source That Is Already Actioned, Which Is What Drives A Persistent Source Towards "MaximumViolationScore"
+    internal const int ActionedViolationWeight = 10;
+
+    // The Reference Drains Only Once At Least This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
+    private static readonly TimeSpan MinimumDrainInterval = TimeSpan.FromMilliseconds(900);
+
+    private readonly ConcurrentDictionary<IPEndPoint, int> scores = new ();
+
+    private long lastDrainTimestamp = timeProvider.GetTimestamp();
 
     /// <summary>
-    ///     Charges <paramref name="weight"/> against <paramref name="source"/>. The outcome is read separately through <see cref="IsWithinAllowance"/>, because a charge is recorded whether or not the source still has room.
+    ///     How many sources currently carry a score. Exposed for tests and diagnostics; a source drained to zero is no longer counted.
     /// </summary>
-    internal void Charge(IPEndPoint source, int weight)
+    internal int TrackedSourceCount => scores.Count;
+
+    /// <summary>
+    ///     Charges <paramref name="source"/> for the arrival of one datagram, whatever it contains, plus <see cref="ActionedViolationWeight"/> if that leaves it over <see cref="ActionableThreshold"/>.
+    ///     Called exactly once per datagram, before any check, so that a flood carrying no detectable violation is still scored.
+    /// </summary>
+    internal void ChargeArrival(IPEndPoint source) => scores.AddOrUpdate(source, PacketScore, static (_, score) => Arrived(score));
+
+    /// <summary>
+    ///     Charges <paramref name="weight"/> against <paramref name="source"/> for a specific violation, on top of the arrival already charged for the same datagram.
+    ///     The outcome is read separately through <see cref="IsWithinAllowance"/>, because the score is recorded whether or not the source was already actionable.
+    /// </summary>
+    internal void ChargeViolation(IPEndPoint source, int weight)
+        => scores.AddOrUpdate(source,
+
+            // Both Factories Are Static And Take The Weight As State, So Charging Allocates No Closure On The Datagram Path
+            static (_, violationWeight) => Math.Min(violationWeight, MaximumViolationScore),
+            static (_, score, violationWeight) => Math.Min(score + violationWeight, MaximumViolationScore),
+            weight);
+
+    /// <summary>
+    ///     Whether <paramref name="source"/> is still within <see cref="ActionableThreshold"/>. Records nothing and begins tracking nothing, so it is safe to call for every datagram.
+    /// </summary>
+    internal bool IsWithinAllowance(IPEndPoint source) => Score(source) <= ActionableThreshold;
+
+    /// <summary>
+    ///     The current score for <paramref name="source"/>, or zero if it carries none.
+    /// </summary>
+    internal int Score(IPEndPoint source) => scores.TryGetValue(source, out int score) ? score : 0;
+
+    /// <summary>
+    ///     Removes score from every tracked source in proportion to the time elapsed since the last drain, flooring at zero, and forgets any source that reaches it so an address which has stopped misbehaving is not tracked for the life of the process.
+    ///     Called by the proxy's maintenance loop and by nothing else, so the elapsed-time mark needs no synchronisation of its own.
+    /// </summary>
+    internal void Drain()
     {
-        using RateLimitLease lease = For(source).AttemptAcquire(weight);
-    }
+        long now = timeProvider.GetTimestamp();
+        TimeSpan elapsed = timeProvider.GetElapsedTime(lastDrainTimestamp, now);
 
-    /// <summary>
-    ///     Whether <paramref name="source"/> is still within <see cref="ActionableThreshold"/>. Consumes nothing, so it is safe to call for every datagram.
-    /// </summary>
-    internal bool IsWithinAllowance(IPEndPoint source) => For(source).GetStatistics()?.CurrentAvailablePermits > 0;
+        if (elapsed < MinimumDrainInterval)
+            return;
 
-    /// <summary>
-    ///     Restores <see cref="EstimatedPacketsPerSecond"/> of allowance to every tracked source, and forgets any source whose allowance is fully restored so an idle address is not tracked indefinitely.
-    ///     Called once per second by the proxy's maintenance loop, matching the reference proxy's housekeeping pass.
-    /// </summary>
-    internal void Replenish()
-    {
-        foreach (KeyValuePair<IPEndPoint, TokenBucketRateLimiter> entry in limiters)
+        lastDrainTimestamp = now;
+
+        // No Score Can Exceed The Maximum, So Clamping The Drain To It Is Exact And Keeps A Long Pause Between Passes From Overflowing The Conversion
+        int drain = (int) Math.Min(elapsed.TotalSeconds * EstimatedPacketsPerSecond, MaximumViolationScore);
+
+        foreach (KeyValuePair<IPEndPoint, int> entry in scores)
         {
-            entry.Value.TryReplenish();
+            // Both Writes Are Conditional On The Score Not Having Changed Since It Was Read: If A Charge Landed During This Pass, The Source Simply Waits For The Next One, Which Loses A Drain Rather Than A Charge
+            if (entry.Value <= drain)
+                scores.TryRemove(entry);
 
-            // A Source Whose Allowance Is Fully Restored Is Forgotten, So An Address That Has Stopped Misbehaving Is Not Tracked For The Life Of The Process
-            // The Removed Limiter Is Deliberately Not Disposed Here: A Datagram Thread May Already Hold The Same Reference, And Disposing It Underneath That Thread Would Throw On The Hot Path
-            // Dropping The Reference Leaks Nothing, Because Automatic Replenishment Is Off And The Limiter Owns No Timer; At Worst One Charge Lands On The Orphaned Instance, Which Was At Full Allowance Anyway
-            if (entry.Value.GetStatistics()?.CurrentAvailablePermits >= ActionableThreshold)
-                limiters.TryRemove(entry.Key, out _);
+            else
+                scores.TryUpdate(entry.Key, entry.Value - drain, entry.Value);
         }
     }
 
-    private TokenBucketRateLimiter For(IPEndPoint source) => limiters.GetOrAdd(source, _ => new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+    /// <summary>
+    ///     A source's score after one more datagram arrives.
+    /// </summary>
+    private static int Arrived(int score)
     {
-        TokenLimit = ActionableThreshold,
-        TokensPerPeriod = EstimatedPacketsPerSecond,
+        int arrived = score + PacketScore;
 
-        // Replenishment Is Driven By The Maintenance Loop So The Drain Is Deterministic And Testable Without Waiting On Wall-Clock Time
-        AutoReplenishment = false,
-        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        // A Source Already Over The Threshold Pays Extra For Every Further Datagram, Deliberately: The Reference Does This So That Enforcement Failing Elsewhere Still Leaves A Persistent Source Costed
+        if (arrived > ActionableThreshold)
+            arrived += ActionedViolationWeight;
 
-        // The Datagram Path Must Never Wait, So Nothing Is Queued
-        QueueLimit = 0,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
-    }));
-
-    public void Dispose()
-    {
-        foreach (TokenBucketRateLimiter limiter in limiters.Values)
-            limiter.Dispose();
-
-        limiters.Clear();
+        return Math.Min(arrived, MaximumViolationScore);
     }
 }
 ```
@@ -637,13 +912,13 @@ internal sealed class ViolationScoreContainer : IDisposable
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
-Expected: build succeeds with 0 warnings; all tests pass, the rate test included.
+Expected: build succeeds with 0 warnings; all tests pass, the expected-rate test and the accumulation regression test included.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add source/COMPEL/Services/Proxy/ViolationScoreContainer.cs source/COMPEL/Internals/UsingDirectives.cs source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs source/COMPEL.Tests/COMPEL.Tests.csproj
-git commit -m "Score Proxy Abuse Per Source With A Draining Allowance"
+git add source/COMPEL/Services/Proxy/ViolationScoreContainer.cs source/COMPEL.Tests/Services/Proxy/ControllableTimeProvider.cs source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs
+git commit -m "Score Proxy Abuse Per Source With A Draining Accumulator"
 ```
 
 ---
@@ -1004,7 +1279,7 @@ git commit -m "Admit Each Challenge Counter Once, Tolerating A Renewal"
 - Test: `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
 
 **Interfaces:**
-- Consumes: `ProxyForwarderKind`, `ChallengeQuota`, `ClientPacketReader`, `ViolationScoreContainer`, `ChallengeWindow`, `ChallengeAdmission`.
+- Consumes: `ProxyForwarderKind`, `ChallengeQuota`, `ClientPacketReader`, `ViolationScoreContainer` (`ChargeArrival`, `ChargeViolation`, `IsWithinAllowance`, `Drain`; not `IDisposable`), `ChallengeWindow`, `ChallengeAdmission`.
 - Produces: `UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, ILogger logger)`; `int UDPForwarder.DroppedDatagramCount`.
 
 - [ ] **Step 1: Fact verification**
@@ -1027,7 +1302,7 @@ The existing `UDPForwarderTests` already relays over loopback; add to it.
     [Test]
     public async Task A_Short_Datagram_Is_Dropped_Rather_Than_Relayed()
     {
-        using ViolationScoreContainer container = new ();
+        ViolationScoreContainer container = new (TimeProvider.System);
         using Socket server = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         server.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
@@ -1105,9 +1380,20 @@ Have `SendChallenge` record what it issued. Change its signature to take the ses
 Then replace the forwarding block in `Run`, immediately after `session.Touch()`, with the ordered pipeline:
 
 ```csharp
+            // Every Datagram Costs Its Source, Whatever It Turns Out To Contain, Which Is What The Drain Rate Is Calibrated Against; The Reference Does This First As Well
+            scoreContainer.ChargeArrival(client);
+
+            // A Source Already Over The Threshold Is Refused Before Anything Reads Its Datagram
+            if (scoreContainer.IsWithinAllowance(client) is false)
+            {
+                Drop(client, "Actioned");
+
+                continue;
+            }
+
             ReadOnlySpan<byte> datagram = buffer.AsSpan(0, result.ReceivedBytes);
 
-            // The Length Guard Runs First So No Field Is Ever Read Out Of Range
+            // The Length Guard Runs Before Any Field Is Read So None Is Ever Read Out Of Range
             if (ClientPacketReader.TryRead(datagram, kind, out uint challenge, out ushort counter) is false)
             {
                 Drop(client, ViolationScoreContainer.TooShortViolationWeight, "Too Short");
@@ -1140,27 +1426,24 @@ Then replace the forwarding block in `Run`, immediately after `session.Touch()`,
                 continue;
             }
 
-            if (scoreContainer.IsWithinAllowance(client) is false)
-            {
-                Drop(client, 0, "Over Threshold");
-
-                continue;
-            }
-
             try { await session.UpstreamSocket.SendAsync(buffer.AsMemory(0, result.ReceivedBytes), SocketFlags.None, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
             catch (Exception exception) { logger.LogDebug(exception, "Failed To Forward Datagram To Server For {Client}", client); }
 ```
 
-Add the drop helper, which charges the score and logs only the first drop per source so a flood cannot become a log flood:
+Add the drop helpers, which log only the first drop per source so a flood cannot become a log flood. There are two because the arrival has already been charged for every datagram by the time a check fails: the overload taking a weight charges that violation on top, while the overload without one charges nothing further.
 
 ```csharp
     private void Drop(IPEndPoint client, int weight, string reason)
     {
-        Interlocked.Increment(ref droppedDatagramCount);
+        scoreContainer.ChargeViolation(client, weight);
 
-        if (weight > 0)
-            scoreContainer.Charge(client, weight);
+        Drop(client, reason);
+    }
+
+    private void Drop(IPEndPoint client, string reason)
+    {
+        Interlocked.Increment(ref droppedDatagramCount);
 
         if (reportedDrops.TryAdd(client, true))
             logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
@@ -1171,7 +1454,7 @@ with `private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = ne
 
 - [ ] **Step 5: Change the proxy service to pass the kind and the container**
 
-In `UDPProxyService`, add a `private readonly ViolationScoreContainer scoreContainer = new ();` field, dispose it alongside the forwarders, and call `scoreContainer.Replenish();` once per iteration of `RunMaintenanceLoop` so a source's allowance drains on the one-second cadence the container expects. Then change the two calls to pass the enum, and change `TryAddForwarder`:
+In `UDPProxyService`, add a `private readonly ViolationScoreContainer scoreContainer = new (TimeProvider.System);` field and call `scoreContainer.Drain();` once per iteration of `RunMaintenanceLoop`, so score drains on the cadence the container expects. The container is not `IDisposable` and must not be disposed alongside the forwarders. Then change the two calls to pass the enum, and change `TryAddForwarder`:
 
 ```csharp
             TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, ProxyForwarderKind.Game);
@@ -1282,7 +1565,7 @@ In `UDPProxyService`, beside the existing fields:
     public bool IsUnderAttack => Volatile.Read(ref isUnderAttack);
 ```
 
-In `RunMaintenanceLoop`, alongside the `scoreContainer.Replenish();` call added in Task 5, sample the aggregate drop count and reset the window every five minutes, matching the reference's cadence:
+In `RunMaintenanceLoop`, alongside the `scoreContainer.Drain();` call added in Task 5, sample the aggregate drop count and reset the window every five minutes, matching the reference's cadence:
 
 ```csharp
             int drops = DroppedDatagramCount;

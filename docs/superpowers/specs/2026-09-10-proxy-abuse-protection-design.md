@@ -74,14 +74,19 @@ The longer expiry is a deliberate safety margin, not a fault, and is retained.
 
 ### Violation score is a separate decaying accumulator
 
-Violations add weight to a per-source score, drained by a housekeeping pass (`main.cpp:1184-1192`):
+Every packet a source sends costs 1, unconditionally (`main.cpp:534`); violations add their weight on top; and a housekeeping pass drains the score in proportion to elapsed time (`main.cpp:1177-1193`):
 
 ```cpp
+++warns;                                                          // every packet, before any violation weight
 decay = elapsed_milliseconds * ESTIMATED_PACKETS_PER_SECOND / 1000.0f;
-warns = max(0, warns - decay)
+warns = max(0, warns - decay)                                     // only once elapsed_milliseconds > 900
 ```
 
+The per-packet cost is what gives the drain rate its meaning. The reference documents `ESTIMATED_PACKETS_PER_SECOND` as "we expect client to send less than this amount packets per second", so a source at or below 140 packets a second nets zero while one above it accumulates with no violation at all. Scoring violation weights alone would leave a well-behaved source permanently at zero and make the drain rate arbitrary.
+
 Weights run from 30 to 200 against a threshold of 4000, so no single anomaly acts on its own.
+
+**Two ceilings, not one.** `BAN_THRESHOLD` (4000) is where a source starts being acted upon; `MAX_WARN_COUNT` (20000) is where the score saturates. Between them the reference keeps adding `WARN_BANNED` (10) per packet (`main.cpp:542-543`), deliberately — its comment says "in case the firewall rules fail for any reason". A source that keeps pushing therefore climbs to five times the threshold and needs roughly 114 seconds to decay back under it, against roughly 29 seconds for one that stops as soon as it is actioned. Collapsing the two ceilings onto one number loses that graduated persistence, which is what makes the score expensive for a persistent attacker and cheap for a client that misbehaves once.
 
 ### The original's enforcement is rejected
 
@@ -126,24 +131,28 @@ The rates are the constants (144 per second game, 8 per second game command, 10 
 
 ### Components
 
-**`ViolationScoreContainer`** — per-source score and drain, backed by the framework rather than hand-rolled:
+**`ViolationScoreContainer`** — a per-source decaying score, implemented directly:
 
 | Concept | Implementation |
 | --- | --- |
-| Per-source partitioning, idle cleanup, thread safety | `PartitionedRateLimiter` keyed on the source endpoint |
-| Container capacity | `ActionableThreshold` |
-| Drain rate | `TokensPerPeriod` / `ReplenishmentPeriod`, from `EstimatedPacketsPerSecond` |
-| Weighted violation | `AttemptAcquire(permitCount: weight)` |
-| Over threshold | the acquisition fails |
+| Per-source partitioning and thread safety | `ConcurrentDictionary<IPEndPoint, int>` keyed on the source endpoint |
+| Accumulation | a saturating add, capped at `MaximumViolationScore` |
+| Actioned | the score exceeds `ActionableThreshold` |
+| Drain | `Replenish` subtracts `EstimatedPacketsPerSecond` for every elapsed second, flooring at zero |
+| Idle cleanup | a source whose score reaches zero is forgotten |
+| Clock | an injected `TimeProvider`, so the drain is testable without waiting on wall-clock time |
 
-`System.Threading.RateLimiting` is in the ASP.NET Core shared framework for `net11.0`, so no package reference is added. Only the synchronous `AttemptAcquire` is used, with a queue limit of zero: the datagram loop must never await a limiter. A token container is the dual of accumulate-and-decay — capacity consumed as score accrues, recovered as it drains — so the reference behaviour is reproduced without reimplementing it.
+`System.Threading.RateLimiting` was the first choice and was rejected on evidence. A token container looks like the dual of accumulate-and-decay — capacity consumed as score accrues, recovered as it drains — but three properties of the framework's `TokenBucketRateLimiter` make it unable to express this model. All three were measured against `System.Threading.RateLimiting` 11.0.0.0 as loaded from `Microsoft.AspNetCore.App/11.0.0-preview.7`, the assembly a `net11.0` target actually resolves:
 
-This exact API shape has been verified to compile against the target framework with no warnings: `PartitionedRateLimiter.Create`, `RateLimitPartition.GetTokenBucketLimiter`, `TokenBucketRateLimiterOptions` with `TokenLimit`, `TokensPerPeriod`, `ReplenishmentPeriod`, `QueueLimit` and `AutoReplenishment`, and a synchronous weighted `AttemptAcquire` returning a lease whose `IsAcquired` reports the outcome.
+- **`AttemptAcquire` is all-or-nothing, where the reference always accumulates.** A charge larger than the remaining permits fails and consumes nothing. Measured on a complete token-bucket implementation of this component: after 400 duplicate-weight charges — a reference score of 12000, three times the threshold — the source was still within its allowance, parked indefinitely at 10 permits, because every further charge of 30 exceeded what was left. Any weight that does not divide the threshold exactly lets a source sit just below it and never be actioned, which defeats the component entirely.
+- **The counter cannot exceed `TokenLimit`.** With the limit set to the threshold, the above-threshold escalation has nowhere to go: `MaximumViolationScore` becomes unrepresentable and the graduated persistence described above is lost.
+- **The drain cannot be driven deterministically.** `TryReplenish` scales what it restores by real elapsed time — with a 1 ms period and 140 tokens per period, one call after 1000 ms restored the full 4000, not 140. `ReplenishmentPeriod` is rejected at `TimeSpan.Zero`, a one-tick period restores the whole limit even in a tight loop, and there is no `TimeProvider` anywhere on `TokenBucketRateLimiterOptions`. The only fixed-amount workaround is to reconstruct the limiter every second, which hand-rolls the drain regardless while adding object churn and a lost-charge race — and a fixed amount is the one behaviour the reference does not have, since its decay is proportional to elapsed time precisely so that a late housekeeping pass still decays by the right amount.
 
-Two constraints follow from that API and must hold:
+What remains once those are accounted for is not a rate limiter. It is a weighted score with linear decay, and the framework has no primitive for one — `TokenBucket`, `FixedWindow`, `SlidingWindow` and `Concurrency` all model request admission, not weighted scores. Implemented directly it is roughly forty lines, matches the reference exactly, holds no unmanaged resource, and is deterministic under test. `ConcurrentDictionary` and `TimeProvider` are both core and Native AOT-safe, so the component adds no trim risk of its own; the first Native AOT publish after this work lands is still checked for warnings.
 
-- **No violation weight may exceed `ActionableThreshold`.** A permit count above the container's limit raises an exception rather than simply failing to acquire, so a weight larger than the threshold would throw on the datagram path instead of dropping the datagram. The intended weights (at most 200 against a threshold of 4000) satisfy this comfortably, and a test asserts it so a later weight cannot violate it silently.
-- **Native AOT compatibility is expected but unconfirmed.** The library is reflection-free, and the shape compiles cleanly, but trim and AOT analysers only run at publish time and the verification above was compiled into the test project rather than the published binary. The first Native AOT publish after this component lands must be checked for trim or AOT warnings before the work is considered done.
+One constraint follows and must hold:
+
+- **No violation weight may exceed `ActionableThreshold`.** Not because a larger weight would throw — a saturating add cannot — but because a weight at or above the threshold would action a source on a single anomaly, which is the behaviour the weighting exists to avoid. The intended weights (at most 200 against a threshold of 4000) satisfy this comfortably, and a test asserts it so a later weight cannot violate it silently.
 
 **`ClientPacketReader`** — a small static reader over a datagram span exposing the minimum length for a kind, the echoed challenge, and the counter. Pure, span-based, no allocation, and the natural home for the bounds checking. Every offset above lives here as a named constant rather than being scattered.
 
@@ -165,12 +174,13 @@ PascalCase and full words, with the reference `#define` in a trailing comment fo
 | `WARN_UNAUTHENTICATED` | `UnauthenticatedViolationWeight` |
 | `WARN_DUPE` | `DuplicateViolationWeight` |
 | `WARN_TOO_SHORT` | `TooShortViolationWeight` |
+| `WARN_BANNED` | `ActionedViolationWeight` |
 | `CHALLENGE_MAX_CTR` | `ChallengePacketsPerSecond` (a rate; quota derived) |
 | `CHALLENGE_MAX_GAME_CMD_CTR` | `ChallengeGameCommandPacketsPerSecond` |
 | `CHALLENGE_MAX_CTR_VOICE` | `ChallengeVoicePacketsPerSecond` |
 | `MAX_CTR_UNAUTHENTICATED` | `UnauthenticatedPacketQuota` |
 
-`ActionableThreshold` is deliberately generic: the action is a drop today, and naming it after dropping would misname it if the policy changed. "Container" replaces the reference's bucket metaphor throughout; the sole unavoidable exception is the framework's own `TokenBucketRateLimiter` type name.
+`ActionableThreshold` is deliberately generic: the action is a drop today, and naming it after dropping would misname it if the policy changed. `ActionedViolationWeight` follows the same reasoning as `ActionableThreshold`: the reference calls it `WARN_BANNED`, but COMPEL does not ban. "Container" replaces the reference's bucket metaphor throughout, with no exceptions now that no framework limiter type appears.
 
 Weights for deferred checks are not defined, because constants for checks that do not exist are dead code.
 
@@ -178,14 +188,15 @@ Weights for deferred checks are not defined, because constants for checks that d
 
 For each datagram arriving on a public port:
 
-1. **Length guard first.** Below the minimum for the kind (41 voice, 43 game), add `TooShortViolationWeight` and drop. Nothing else reads the datagram until this passes.
-2. Look up or create the session, as today.
-3. Read the echoed challenge and counter.
-4. **Unauthenticated** (the challenge matches neither the current nor the previous): if the counter is at or above `UnauthenticatedPacketQuota`, add `UnauthenticatedViolationWeight` and drop. That quota is a total, never replenished while unauthenticated. COMPEL issues a challenge on session creation, so this state is normally momentary.
-5. **Over quota**: the counter is at or above the derived maximum for the matched challenge and kind — add `RateLimitViolationWeight` and drop.
-6. **Duplicate**: the counter has already been seen for that challenge — add `DuplicateViolationWeight` and drop. Otherwise record it.
-7. **Over threshold**: the score container refuses the source — drop.
-8. Relay upstream, unchanged from today.
+1. **Score the packet.** Every datagram from a client costs 1 against its source, before any check runs (`main.cpp:534`). This is the cost the drain rate is calibrated against.
+2. **Length guard.** Below the minimum for the kind (41 voice, 43 game), add `TooShortViolationWeight` and drop. Nothing else reads the datagram until this passes.
+3. Look up or create the session, as today.
+4. Read the echoed challenge and counter.
+5. **Unauthenticated** (the challenge matches neither the current nor the previous): if the counter is at or above `UnauthenticatedPacketQuota`, add `UnauthenticatedViolationWeight` and drop. That quota is a total, never replenished while unauthenticated. COMPEL issues a challenge on session creation, so this state is normally momentary.
+6. **Over quota**: the counter is at or above the derived maximum for the matched challenge and kind — add `RateLimitViolationWeight` and drop.
+7. **Duplicate**: the counter has already been seen for that challenge — add `DuplicateViolationWeight` and drop. Otherwise record it.
+8. **Actioned**: the source's score exceeds `ActionableThreshold` — add `ActionedViolationWeight` and drop, so a source that keeps pushing while actioned climbs towards `MaximumViolationScore` and stays actioned for longer.
+9. Relay upstream, unchanged from today.
 
 Return traffic from the match server is unchanged and unscored; it does not originate from a client.
 
