@@ -80,13 +80,18 @@ Every packet a source sends costs 1, unconditionally (`main.cpp:534`); violation
 ++warns;                                                          // every packet, before any violation weight
 decay = elapsed_milliseconds * ESTIMATED_PACKETS_PER_SECOND / 1000.0f;
 warns = max(0, warns - decay)                                     // only once elapsed_milliseconds > 900
+                                                                  // warns is an unsigned int, so the RESULT is truncated
 ```
 
 The per-packet cost is what gives the drain rate its meaning. The reference documents `ESTIMATED_PACKETS_PER_SECOND` as "we expect client to send less than this amount packets per second", so a source at or below 140 packets a second nets zero while one above it accumulates with no violation at all. Scoring violation weights alone would leave a well-behaved source permanently at zero and make the drain rate arbitrary.
 
 Weights run from 30 to 200 against a threshold of 4000, so no single anomaly acts on its own.
 
-**Two ceilings, not one.** `BAN_THRESHOLD` (4000) is where a source starts being acted upon; `MAX_WARN_COUNT` (20000) is where the score saturates. Between them the reference keeps adding `WARN_BANNED` (10) per packet (`main.cpp:542-543`), deliberately — its comment says "in case the firewall rules fail for any reason". A source that keeps pushing therefore climbs to five times the threshold and needs roughly 114 seconds to decay back under it, against roughly 29 seconds for one that stops as soon as it is actioned. Collapsing the two ceilings onto one number loses that graduated persistence, which is what makes the score expensive for a persistent attacker and cheap for a client that misbehaves once.
+**Two ceilings, not one.** `BAN_THRESHOLD` (4000) is where a source starts being acted upon; `MAX_WARN_COUNT` (20000) bounds how far above it the score may climb. Between them the reference keeps adding `WARN_BANNED` (10) per packet (`main.cpp:542-543`), deliberately — its comment says "in case the firewall rules fail for any reason". A source that keeps pushing therefore climbs to five times the threshold and needs roughly 114 seconds to decay back under it, against roughly 29 seconds for one that stops as soon as it is actioned. Collapsing the two ceilings onto one number loses that graduated persistence, which is what makes the score expensive for a persistent attacker and cheap for a client that misbehaves once.
+
+One deliberate divergence: in the reference, `MAX_WARN_COUNT` bounds only the escalation, while the per-packet cost and the ordinary weights are added with no ceiling, so its count climbs until it wraps. COMPEL saturates every path at `MaximumViolationScore` instead. That keeps the arithmetic in range and bounds recovery to roughly two and a half minutes of drain, at the cost of a flood's penalty no longer growing with its duration — which is the right trade when the response is a local drop rather than a firewall ban.
+
+**Why the drain rate does not act on a compliant client.** The reference's three rate constants are deliberately ordered, and the drain sits between them: the client's soft self-limit is 675 packets per challenge (135 a second, `main.cpp:684`), the drain is 140 a second, and the hard quota is 720 (144 a second, `main.cpp:674`). A client honouring its own soft limit therefore nets minus five a second and never accumulates. Only a client sending between 141 and 144 — above what it should send, below what is refused outright — drifts upward, which is the intent rather than a false positive.
 
 ### The original's enforcement is rejected
 

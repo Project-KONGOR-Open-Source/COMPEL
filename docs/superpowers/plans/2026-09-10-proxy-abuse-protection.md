@@ -689,6 +689,22 @@ public sealed class ViolationScoreContainerTests
         }
     }
 
+    // Every Other Advance In This Suite Is A Whole Multiple Of 50 Milliseconds, Which Is Exactly When The Drain Is A Whole Number, So Without This The Truncation Above Is Never Exercised
+    [Test]
+    public async Task A_Drain_Over_A_Fractional_Interval_Truncates_The_Remaining_Score()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+
+        // 1234 Milliseconds Drains 172.76, So 200 Must Leave 27, Not The 28 A Whole-Number Drain Would Leave
+        clock.Advance(TimeSpan.FromMilliseconds(1234));
+        container.Drain();
+
+        await Assert.That(container.Score(Source())).IsEqualTo(27);
+    }
+
     [Test]
     public async Task A_Source_Drained_To_Zero_Is_Forgotten()
     {
@@ -765,13 +781,13 @@ public sealed class ViolationScoreContainerTests
     {
         ViolationScoreContainer container = new (new ControllableTimeProvider());
 
+        container.ChargeViolation(Source(41000), ViolationScoreContainer.TooShortViolationWeight);
+        container.ChargeViolation(Source(41001), ViolationScoreContainer.UnauthenticatedViolationWeight);
+        container.ChargeViolation(Source(41002), ViolationScoreContainer.RateLimitViolationWeight);
+        container.ChargeViolation(Source(41003), ViolationScoreContainer.DuplicateViolationWeight);
+
         using (Assert.Multiple())
         {
-            container.ChargeViolation(Source(41000), ViolationScoreContainer.TooShortViolationWeight);
-            container.ChargeViolation(Source(41001), ViolationScoreContainer.UnauthenticatedViolationWeight);
-            container.ChargeViolation(Source(41002), ViolationScoreContainer.RateLimitViolationWeight);
-            container.ChargeViolation(Source(41003), ViolationScoreContainer.DuplicateViolationWeight);
-
             await Assert.That(container.IsWithinAllowance(Source(41000))).IsTrue();
             await Assert.That(container.IsWithinAllowance(Source(41001))).IsTrue();
             await Assert.That(container.IsWithinAllowance(Source(41002))).IsTrue();
@@ -801,7 +817,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     // "BAN_THRESHOLD": The Score Above Which A Source Is Acted Upon; Named For The Decision Rather Than Today's Action, Which Is A Drop
     internal const int ActionableThreshold = 4000;
 
-    // "MAX_WARN_COUNT": Where Accumulation Saturates; Five Times The Threshold, So A Source That Keeps Pushing Stays Actioned Well After It Stops
+    // "MAX_WARN_COUNT": Where This Implementation Saturates Every Path. The Reference Bounds Only The Above-Threshold Escalation With It And Lets Its Own Count Climb Unbounded; Saturating Instead Keeps The Arithmetic In Range And Bounds The Worst Case To Roughly Two And A Half Minutes Of Drain, At The Cost Of A Flood's Penalty No Longer Growing With Its Duration
     internal const int MaximumViolationScore = 20000;
 
     // "ESTIMATED_PACKETS_PER_SECOND": The Packet Rate A Client Is Expected To Stay Under, Which Is Both The Score Drained Per Second And The Arrival Rate At Which A Source Breaks Even
@@ -825,7 +841,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     // "WARN_BANNED": Charged For Every Datagram From A Source That Is Already Actioned, Which Is What Drives A Persistent Source Towards "MaximumViolationScore"
     internal const int ActionedViolationWeight = 10;
 
-    // The Reference Drains Only Once At Least This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
+    // The Reference Drains Only Once More Than This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
     private static readonly TimeSpan MinimumDrainInterval = TimeSpan.FromMilliseconds(900);
 
     private readonly ConcurrentDictionary<IPEndPoint, int> scores = new ();
@@ -841,7 +857,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     ///     Charges <paramref name="source"/> for the arrival of one datagram, whatever it contains, plus <see cref="ActionedViolationWeight"/> if that leaves it over <see cref="ActionableThreshold"/>.
     ///     Called exactly once per datagram, before any check, so that a flood carrying no detectable violation is still scored.
     /// </summary>
-    internal void ChargeArrival(IPEndPoint source) => scores.AddOrUpdate(source, PacketScore, static (_, score) => Arrived(score));
+    internal void ChargeArrival(IPEndPoint source) => scores.AddOrUpdate(source, Arrived(0), static (_, score) => Arrived(score));
 
     /// <summary>
     ///     Charges <paramref name="weight"/> against <paramref name="source"/> for a specific violation, on top of the arrival already charged for the same datagram.
@@ -867,29 +883,33 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
 
     /// <summary>
     ///     Removes score from every tracked source in proportion to the time elapsed since the last drain, flooring at zero, and forgets any source that reaches it so an address which has stopped misbehaving is not tracked for the life of the process.
-    ///     Called by the proxy's maintenance loop and by nothing else, so the elapsed-time mark needs no synchronisation of its own.
+    ///     Only one call may be in progress at a time, which the proxy's single maintenance loop satisfies; the elapsed-time mark is unsynchronised, so concurrent calls would each apply a full drain and would corrupt it.
     /// </summary>
     internal void Drain()
     {
         long now = timeProvider.GetTimestamp();
         TimeSpan elapsed = timeProvider.GetElapsedTime(lastDrainTimestamp, now);
 
-        if (elapsed < MinimumDrainInterval)
+        if (elapsed <= MinimumDrainInterval)
             return;
 
         lastDrainTimestamp = now;
 
-        // No Score Can Exceed The Maximum, So Clamping The Drain To It Is Exact And Keeps A Long Pause Between Passes From Overflowing The Conversion
-        int drain = (int) Math.Min(elapsed.TotalSeconds * EstimatedPacketsPerSecond, MaximumViolationScore);
+        // The Amount Stays Fractional And The Subtraction's Result Is Truncated, Which Is What The Reference Does: Its Score Is An Unsigned Integer Assigned From A Float Subtraction, So Each Source Rounds Down And Drains Up To One More Than The Exact Amount Rather Than Up To One Less
+        // No Score Can Exceed The Maximum, So Clamping The Amount To It Keeps A Long Pause Between Passes From Overflowing The Conversion Below
+        double drainAmount = Math.Min(elapsed.TotalSeconds * EstimatedPacketsPerSecond, MaximumViolationScore);
 
         foreach (KeyValuePair<IPEndPoint, int> entry in scores)
         {
+            int remaining = entry.Value > drainAmount ? (int)(entry.Value - drainAmount) : 0;
+
+            // A Source Drained To Zero Is Forgotten, So An Address That Has Stopped Misbehaving Is Not Tracked For The Life Of The Process
             // Both Writes Are Conditional On The Score Not Having Changed Since It Was Read: If A Charge Landed During This Pass, The Source Simply Waits For The Next One, Which Loses A Drain Rather Than A Charge
-            if (entry.Value <= drain)
+            if (remaining is 0)
                 scores.TryRemove(entry);
 
             else
-                scores.TryUpdate(entry.Key, entry.Value - drain, entry.Value);
+                scores.TryUpdate(entry.Key, remaining, entry.Value);
         }
     }
 
@@ -1668,7 +1688,7 @@ git commit -m "Report Proxy Datagram Drops Through The Control Plane"
 ## Final Verification
 
 - [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
-- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 38 new tests across the six new units.
+- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 39 new tests across the six new units.
 - [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
 - [ ] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
 - [ ] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
