@@ -1,7 +1,7 @@
 namespace COMPEL.Services.Proxy;
 
 /// <summary>
-///     A bidirectional UDP relay for a single public port. Datagrams from a client are forwarded to the local server port; the server's replies are relayed back to the originating client.
+///     A bidirectional UDP relay for a single public port. It validates each client datagram's length, challenge and counter, scores abusive sources and drops them, and relays only what passes, while the server's replies are relayed back unexamined.
 ///     A dedicated upstream socket per client preserves the server's per-client addressing, mirroring how the native proxy mapped each public port to its local server port.
 ///     Heroes Of Newerth clients throttle their own traffic on the public (20000-29999) port range until the proxy authenticates them with a challenge, so the forwarder issues a challenge to each session on creation and renews it periodically.
 /// </summary>
@@ -18,6 +18,9 @@ internal sealed class UDPForwarder : IDisposable
 
     // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge
     private const ushort ChallengeExpirySeconds = 60;
+
+    // The Reference Clears Its Equivalent Maps Wholesale Once They Pass A Thousand Entries Rather Than Retaining One Per Endpoint For The Life Of The Process
+    private const int ReportedDropLimit = 1000;
 
     private readonly IPEndPoint serverEndPoint;
     private readonly ProxyForwarderKind kind;
@@ -93,7 +96,17 @@ internal sealed class UDPForwarder : IDisposable
             bool created;
 
             try { session = GetOrCreateSession(client, stoppingToken, out created); }
-            catch (Exception exception) { logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client); continue; }
+            catch (Exception exception)
+            {
+                // Counted, Charged And Throttled Like Any Other Refusal. Unthrottled And Unscored, This Path Disabled The Abuse Protection For New Sources At Exactly The Moment The Proxy Was Being Exhausted, And Logged Once Per Datagram
+                // Only The Arrival Is Charged And No Violation Weight, Because A Session Can Fail To Open For Reasons That Are Not The Client's Fault
+                scoreContainer.ChargeArrival(client);
+
+                if (Drop(client, "Session Creation Failed"))
+                    logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client);
+
+                continue;
+            }
 
             // Authenticate A New Client Immediately So It Does Not Exhaust Its Unauthenticated Packet Budget Waiting For The First Periodic Renewal
             if (created)
@@ -104,7 +117,7 @@ internal sealed class UDPForwarder : IDisposable
             // Every Datagram Costs Its Source, Whatever It Turns Out To Contain, Which Is What The Drain Rate Is Calibrated Against; The Reference Does This First As Well
             scoreContainer.ChargeArrival(client);
 
-            // A Source Already Over The Threshold Is Refused Before Anything Reads Its Datagram
+            // A Source Already Over The Threshold Is Refused Before Any Field Of Its Datagram Is Read. The Session And Its Challenge Already Exist By This Point, Because A Client Must Be Challenged Before It Can Send Anything Valid
             if (scoreContainer.IsWithinAllowance(client) is false)
             {
                 Drop(client, "Actioned");
@@ -124,23 +137,23 @@ internal sealed class UDPForwarder : IDisposable
 
             ChallengeWindow? window = session.Challenges.Match(challenge);
 
+            // A Non-Zero Challenge This Session Never Issued Or No Longer Retains. The Reference Treats This Separately From A Client That Has Not Been Challenged Yet, Which Echoes Zero And Matches The Session's Unauthenticated Window
             if (window is null)
             {
-                // The Client Has Not Accepted A Challenge Yet, So It Is Held To The Unauthenticated Total Rather Than A Rate
-                if (counter >= ChallengeQuota.UnauthenticatedPacketQuota)
-                {
-                    Drop(client, ViolationScoreContainer.UnauthenticatedViolationWeight, "Unauthenticated");
+                Drop(client, ViolationScoreContainer.ChallengeViolationWeight, "Unknown Challenge");
 
-                    continue;
-                }
+                continue;
             }
 
             // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
-            else if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
+            if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
             {
-                // Constant Reasons Rather Than "admission.ToString()", Which Would Allocate On Every Dropped Datagram Whether Or Not The Drop Is Logged, And A Flood Is Made Entirely Of Dropped Datagrams
                 if (admission is ChallengeAdmission.Duplicate)
                     Drop(client, ViolationScoreContainer.DuplicateViolationWeight, "Duplicate");
+
+                // A Client That Has Not Accepted A Challenge Yet Is Held To A Small Total Rather Than A Rate, And The Reference Weights Exceeding That Total More Heavily Than An Ordinary Rate Limit
+                else if (challenge is SessionChallengeState.UnauthenticatedChallenge)
+                    Drop(client, ViolationScoreContainer.UnauthenticatedViolationWeight, "Unauthenticated");
 
                 else
                     Drop(client, ViolationScoreContainer.RateLimitViolationWeight, "Over Quota");
@@ -202,19 +215,30 @@ internal sealed class UDPForwarder : IDisposable
         return packet;
     }
 
-    private void Drop(IPEndPoint client, int weight, string reason)
+    private bool Drop(IPEndPoint client, int weight, string reason)
     {
         scoreContainer.ChargeViolation(client, weight);
 
-        Drop(client, reason);
+        return Drop(client, reason);
     }
 
-    private void Drop(IPEndPoint client, string reason)
+    /// <summary>
+    ///     Counts a refused datagram and logs the reason once per source, so that a flood cannot become a log flood.
+    ///     Returns whether this was the first refusal reported for the source, so a caller with more detail can log it under the same throttle.
+    /// </summary>
+    private bool Drop(IPEndPoint client, string reason)
     {
         Interlocked.Increment(ref droppedDatagramCount);
 
-        if (reportedDrops.TryAdd(client, true))
-            logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
+        if (reportedDrops.Count >= ReportedDropLimit)
+            reportedDrops.Clear();
+
+        if (reportedDrops.TryAdd(client, true) is false)
+            return false;
+
+        logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
+
+        return true;
     }
 
     private ClientSession GetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out bool created)
@@ -313,6 +337,8 @@ internal sealed class UDPForwarder : IDisposable
 
                 if (sessions.TryRemove(pair.Key, out ClientSession? removed))
                     removed.Dispose();
+
+                reportedDrops.TryRemove(pair.Key, out _);
             }
         }
     }
