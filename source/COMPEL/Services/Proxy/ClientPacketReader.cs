@@ -7,8 +7,8 @@ namespace COMPEL.Services.Proxy;
 internal static class ClientPacketReader
 {
     // The Watermark Prefix Occupies The Leading Forty Bytes; The Fields Below Sit Within Its Enhanced Half
-    private const int ChallengeOffset = 28;
-    private const int CounterOffset = 32;
+    internal const int ChallengeOffset = 28;
+    internal const int CounterOffset = 32;
 
     // "40 bytes Watermark + 2 bytes connection + 1 bytes packet type" For Game Traffic, Two Fewer For Voice
     private const int GameMinimumLength = 43;
