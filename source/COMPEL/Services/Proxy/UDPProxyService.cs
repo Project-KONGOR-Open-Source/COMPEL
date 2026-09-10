@@ -169,14 +169,16 @@ public sealed class UDPProxyService : BackgroundService
             {
                 maintenancePassesThisWindow = 0;
 
-                int droppedDatagramsSnapshot = DroppedDatagramCount;
-                int droppedThisWindow = droppedDatagramsSnapshot - droppedDatagramsAtWindowStart;
+                // The Sum From This Pass Is Reused Rather Than Read Back Through The Property, Which Would Volatile-Read The Value Just Written From It
+                int droppedThisWindow = droppedDatagrams - droppedDatagramsAtWindowStart;
 
-                droppedDatagramsAtWindowStart = droppedDatagramsSnapshot;
+                droppedDatagramsAtWindowStart = droppedDatagrams;
 
-                Volatile.Write(ref isUnderAttack, droppedThisWindow > UnderAttackThreshold);
+                bool underAttack = droppedThisWindow > UnderAttackThreshold;
 
-                if (droppedThisWindow > UnderAttackThreshold)
+                Volatile.Write(ref isUnderAttack, underAttack);
+
+                if (underAttack)
                     logger.LogWarning("The Proxy Refused {DroppedDatagrams} Datagram(s) In The Last Window, Which Exceeds The Under-Attack Threshold Of {Threshold}", droppedThisWindow, UnderAttackThreshold);
             }
         }
