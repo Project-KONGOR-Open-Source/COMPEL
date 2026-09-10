@@ -10,8 +10,11 @@ public sealed class ArtefactsLocator
     // The Leaf Beneath The Documents Folder Is Determined By Heroes Of Newerth Itself; COMPEL Only Controls The Home Directory The Tree Hangs From (On Windows)
     private const string HeroesOfNewerthDirectoryName = "Heroes of Newerth x64";
 
-    // The Linux Server Build Of Heroes Of Newerth Writes Its Runtime Artefacts Beneath This Fixed Directory, Ignoring The Home Directory, So The Home Redirect And The Configured Runtime Artefacts Path Have No Effect On Linux
-    private const string LinuxServerArtefactsDirectory = "/opt/hon/config";
+    /// <summary>
+    ///     The Linux server build of Heroes Of Newerth writes its runtime artefacts beneath this fixed directory, ignoring the home directory, so the home redirect and the configured runtime artefacts path have no effect on Linux.
+    ///     It is exposed so the start-up write-access check can confirm the match server will be able to write there.
+    /// </summary>
+    public const string LinuxServerArtefactsDirectory = "/opt/hon/config";
 
     private readonly MatchServerManagerOptions options;
 

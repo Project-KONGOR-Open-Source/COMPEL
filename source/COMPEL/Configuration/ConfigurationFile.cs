@@ -36,7 +36,7 @@ public sealed class PasswordSetting
 public sealed class InstancesSetting
 {
     public int Value { get; set; } = 1;
-    public string Description => "The number of server instances to spawn. This must be between one and the number of logical processors. The server manager spreads the instances across the available processors; running COMPEL with elevated privileges is required for the manager to assign their processor affinity.";
+    public string Description => "The number of server instances to spawn. This must be between one and the number of logical processors. The server manager spreads the instances across the available processors, each of which binds itself to the processor it is assigned.";
 }
 
 public sealed class WarmInstancesTargetSetting
