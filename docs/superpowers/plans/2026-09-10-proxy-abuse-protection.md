@@ -1095,18 +1095,22 @@ internal enum ChallengeAdmission
 /// </summary>
 internal sealed class ChallengeWindow
 {
+    // The Check And The Record Below Must Not Be Separable, Or Two Datagrams Carrying The Same Counter Could Both Be Admitted; The Forwarder's Single Receive Loop Makes That Unlikely Rather Than Impossible, And An Uncontended Lock Costs Nothing Against A Datagram's Other Work
+    private readonly Lock admissionLock = new ();
+
+    // A Byte Per Admissible Counter Rather Than A Bit, Because Indexing Beats Masking On This Path And The Whole Window Is Under One And A Half Kilobytes At The Largest Quota
     private readonly bool[] seen;
 
-    public ChallengeWindow(uint challenge, ushort quota)
+    internal ChallengeWindow(uint challenge, ushort quota)
     {
         Challenge = challenge;
         Quota = quota;
         seen = new bool[quota];
     }
 
-    public uint Challenge { get; }
+    internal uint Challenge { get; }
 
-    public ushort Quota { get; }
+    private ushort Quota { get; }
 
     /// <summary>
     ///     Admits <paramref name="counter"/> if it is within the quota and has not been seen under this challenge before.
@@ -1120,7 +1124,7 @@ internal sealed class ChallengeWindow
             return false;
         }
 
-        lock (seen)
+        lock (admissionLock)
         {
             if (seen[counter])
             {
