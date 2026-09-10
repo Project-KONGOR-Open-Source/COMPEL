@@ -1,14 +1,16 @@
 # Review Remediation And Restructure Implementation Plan
 
-## Status: Executed, With Loose Ends Outstanding
+## Status: Executed, With One Decision Outstanding
 
-**This document is committed temporarily and is meant to be deleted.** It is here only so the loose ends below stay visible until they are addressed. Delete it, and this section with it, once all four are closed.
+**This document is committed temporarily and is meant to be deleted.** It is here only so the loose ends below stay visible until they are addressed. Delete it, and this section with it, once the last one is closed.
 
-Every task in this plan is implemented, reviewed, and committed. The suite passes at 65 tests with no build warnings, and a Native AOT publish succeeds. Four things remain open.
+Every task in this plan is implemented, reviewed, and committed. The suite passes at 65 tests with no build warnings, and a Native AOT publish succeeds. One thing remains open.
 
-**Two checks are owed before the next release.** Neither could be run during execution, because both need an elevated console and the live CDN. They are the only real verification of the synchronisation log vocabulary and the distribution version fallback, which this work rewrote most heavily, and no automated test covers either. See "Owed Before Release" below.
+**Both owed checks have been run and both passed.** They were run elevated against the live CDN from a freshly published Native AOT baseline directory. See "Owed Before Release" below for what was observed.
 
-**Two decisions are deferred to the operator.** Both are WILLOWMAKER-parity trade-offs where COMPEL's deployment shape differs from a launcher's: synchronisation writes one log line per up-to-date file on every restart into a log that is never rotated, and start-up blocks for up to thirty seconds on a machine with no network when synchronisation is disabled. Changing either departs from parity, so neither was changed. See the last two entries under "Deferred By Decision" below.
+**One decision is still deferred to the operator:** start-up blocks for up to thirty seconds on a machine with no network when synchronisation is disabled. Changing it departs from WILLOWMAKER parity, so it was not changed. See the last entry under "Deferred By Decision" below.
+
+The other deferred decision, a per-file `SKIP:` line for every up-to-date file, turned out to rest on a false premise and needs no decision at all. The content broker raises no event for an up-to-date file; `SKIP:` is the exclusion case only. A steady-state restart writes two synchronisation lines in total, not one per file.
 
 Everything else in "Deferred By Decision" is a settled decision that needs no further action; those entries stay for the record and are not loose ends.
 
@@ -1256,9 +1258,11 @@ Replace the whole `LogSynchronisationEvent` method with:
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
 Expected: build succeeds with 0 warnings; 59 tests pass.
 
-- [ ] OWED, see "Owed Before Release": **Step 6: Manual check**
+- [x] **Step 6: Manual check**
 
-Run `dotnet run --project source/COMPEL -c Release` from an elevated shell in a directory holding only the build output and a configured `COMPEL.json`, so the location guard reports a baseline directory and a real synchronisation runs. Expected in order: `[SYNCHRONISE] INIT: Fetching Manifest For Variant "was" From CDN`, `INIT: Manifest Version ... Lists ... File(s)`, `PLAN: ...`, a `PULL:` line per file, and `DONE: ...` last. Stop with Ctrl+C.
+Publish the Native AOT release with `scripts/Publish-Native-AOT-Release.ps1`, then run the published `COMPEL.exe` from an elevated shell against a configured `COMPEL.json`, so the location guard reports a baseline directory and a real synchronisation runs. Expected in order: `[SYNCHRONISE] INIT: Fetching Manifest For Variant "was" From CDN`, `INIT: Manifest Version ... Lists ... File(s)`, `PLAN: ...`, a `PULL:` line per file, and `DONE: ...` last. Stop with Ctrl+C.
+
+Do not use `dotnet run -c Release` for this: it runs out of `bin/Release/net11.0`, whose dependency assemblies, symbols, and `.deps.json` the location guard reads as foreign entries, so the verdict is UNSAFE and COMPEL refuses to start. The publish directory is the only shape that yields a baseline verdict, because Native AOT leaves a single executable behind.
 
 ---
 
@@ -1523,9 +1527,11 @@ insert:
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
 Expected: build succeeds with 0 warnings; 60 tests pass.
 
-- [ ] OWED, see "Owed Before Release": **Step 5: Manual check**
+- [x] **Step 5: Manual check**
 
-Run `dotnet run --project source/COMPEL` from an elevated shell with `CDNSynchronisation` set to `false` in `COMPEL.json` and valid credentials. Expected on the console: `[SYNCHRONISE] SKIP: Synchronisation Skipped (Manual Override)`, then the two `INIT:` lines, and no `No Distribution Version Is Known` warning from the ping responder. Stop with Ctrl+C.
+Run the published `COMPEL.exe` from an elevated shell with `CDNSynchronisation` set to `false` in `COMPEL.json`. Expected on the console: `[SYNCHRONISE] SKIP: Synchronisation Skipped (Manual Override)`, then the two `INIT:` lines, and no `No Distribution Version Is Known` warning from the ping responder. Stop with Ctrl+C.
+
+The two `INIT:` lines interleave with the `[PROXY______]` and `[INITIALISE_]` lifetime lines, because the synchroniser reports them from a background service while the host is still starting. Their order relative to the `SKIP:` line is what matters. The positive marker for the absent warning is `[PING_______] Answering Master-Server Pings On UDP Port ...`, which the ping responder logs immediately after the version check the warning belongs to.
 
 ---
 
@@ -2375,12 +2381,15 @@ Not covered by any slice, and left for the user to decide: the plan document its
 
 ## Owed Before Release
 
-Neither check could be run during execution: both need an elevated console and the live CDN. Run both before tagging a release.
+Both checks have been run, elevated, against the live CDN, from a freshly published Native AOT baseline directory holding only `COMPEL.exe` and its generated `COMPEL.json`. Both passed. Manifest version `4.10.1.20260617`, 58 files, 2,280,606,952 bytes.
 
-1. **Synchronisation log vocabulary.** Run COMPEL elevated from a directory holding only the build output and a configured `COMPEL.json`, so the location guard reports a baseline directory and a real synchronisation runs. Expect, in order: `[SYNCHRONISE] INIT: Fetching Manifest For Variant "was" From CDN`, `INIT: Manifest Version ... Lists ... File(s)`, `PLAN: ...`, a `PULL:` line per downloaded file, and `DONE: ...` last. While there, count the `SKIP:` lines on a second, up-to-date restart; that number decides the first deferred decision below.
-2. **Distribution version fallback.** Run COMPEL elevated with `CDNSynchronisation` set to `false` and valid credentials. Expect `[SYNCHRONISE] SKIP: Synchronisation Skipped (Manual Override)`, then the two `INIT:` lines, and no `No Distribution Version Is Known` warning from the ping responder.
+1. **Synchronisation log vocabulary. PASSED.** The guard reported `Baseline COMPEL Directory`, and the vocabulary appeared in exactly the expected order: `INIT: Fetching Manifest For Variant "was" From CDN`, `INIT: Manifest Version 4.10.1.20260617 Lists 58 File(s)`, `PLAN: 58 To Download (2,280,606,952 Bytes), 0 To Delete, 0 To Skip, 0 Up To Date`, 58 `PULL:` lines, and `DONE: 58 Downloaded, 0 Deleted, 0 Up To Date, 0 Failed, 2,280,606,952 Bytes Transferred` last. No `FAIL:` or `NUKE:` line appeared, and nothing was written to standard error.
 
-What was verified instead: the Debug build's first-run and unelevated paths, and a real Native AOT Release publish whose binary generated `COMPEL.json` on first run leaving no log or lock file, then exercised the location guard's live path on its second run.
+   The up-to-date restart reported `Heroes Of Newerth Directory ("hon_x64.exe" Is Present)`, then `PLAN: 0 To Download (0 Bytes), 0 To Delete, 0 To Skip, 58 Up To Date` and `DONE: 0 Downloaded, 0 Deleted, 58 Up To Date, 0 Failed, 0 Bytes Transferred`. **Zero `SKIP:` lines**, which voids the first deferred decision below.
+
+2. **Distribution version fallback. PASSED.** `[SYNCHRONISE] SKIP: Synchronisation Skipped (Manual Override)` was followed by both `INIT:` lines and then `[PING_______] Answering Master-Server Pings On UDP Port 21234`, with no `No Distribution Version Is Known` warning in between. The version was therefore known by the time the ping responder built its response template, which is what Task 8 set out to guarantee.
+
+Also confirmed on the same runs: the session header is the first line of `COMPEL.log` with no blank line before it, which closes the elevated half of Task 2's Step 7; and the manager never launched in any run, because the completion line is reported before the readiness gate opens, so neither check needs a reachable master server or real credentials. The credentials need only clear the options validator, which rejects the `USERNAME` and `PASSWORD` placeholders by name.
 
 ## Deferred By Decision
 
@@ -2392,6 +2401,6 @@ These review findings are intentionally not fixed by this plan.
 - **Port-range boundary one instance more permissive than the legacy check.** Intentional: the new check treats the top of the window as usable.
 - **The one-word difference between the two content broker summaries.** "orchestrator's" describes COMPEL and "launcher's" describes WILLOWMAKER; both copies are otherwise identical.
 - **WILLOWMAKER's `COMMAND____` and `PARAMETERS_` categories.** Not ported because the manager command line carries the account password and must not be logged.
-- **A per-file `SKIP:` line for every up-to-date file on every restart, in an unrotated log.** The content broker reports every up-to-date manifest entry, so a steady-state restart writes one line per distribution file. This matches WILLOWMAKER, but WILLOWMAKER is a launcher a person runs once and COMPEL is a service that systemd restarts. Summarising the up-to-date case as one line would depart from parity, so the decision is the user's.
-- **The skip branches block start-up for up to thirty seconds on a disconnected machine.** Resolving the distribution version before the ready gate is what makes the ping responder's missing-version warning truthful, and the content broker's thirty-second timeout is inside the parity-locked file. The cost only appears with synchronisation disabled and no network, which is a development configuration.
+- **A per-file `SKIP:` line for every up-to-date file on every restart, in an unrotated log. VOID; THE PREMISE WAS FALSE.** The content broker raises no event at all for an up-to-date file: it increments a counter, and the count is reported only in the `PLAN:` and `DONE:` lines. `SynchronisationEventKind.Skipped` is raised at the two exclusion gates alone, for a manifest entry matching `ExcludeFromSource` or `ExcludeFromTarget`. A steady-state restart therefore writes two synchronisation lines in total, and the up-to-date restart of the owed check confirmed it with zero `SKIP:` lines against 58 up-to-date files. There is no log-volume trade-off here and nothing to decide.
+- **The skip branches block start-up for up to thirty seconds on a disconnected machine. STILL OPEN.** Resolving the distribution version before the ready gate is what makes the ping responder's missing-version warning truthful, and the content broker's thirty-second timeout is inside the parity-locked file. The cost only appears with synchronisation disabled and no network, which is a development configuration. With the CDN reachable, the owed check measured the whole skip branch at roughly two hundred milliseconds, so nothing is paid in the configuration a host actually runs.
 - **HTTP request logging.** Dropped with Serilog; WILLOWMAKER has no equivalent and the control plane's health polling would have flooded the log.
