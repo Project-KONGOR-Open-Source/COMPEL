@@ -14,6 +14,8 @@ internal sealed class SessionChallengeState
 
     /// <summary>
     ///     Records a newly issued challenge, retaining the one it replaces.
+    ///     The caller must not issue a challenge equal to either of the two already held: a repeat would build a fresh window for that value and silently discard the counters the client has already consumed under it.
+    ///     A monotonic issuer satisfies this on its own, but a random one would not, so the reference checks a new challenge against its whole retained history before accepting it.
     /// </summary>
     internal void Rotate(uint challenge, ushort quota)
     {

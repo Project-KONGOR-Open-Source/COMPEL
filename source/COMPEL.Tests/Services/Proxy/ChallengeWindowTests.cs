@@ -93,4 +93,20 @@ public sealed class ChallengeWindowTests
 
         await Assert.That(second.TryAdmit(5, out _)).IsTrue();
     }
+
+    // The Quota Sizes The Seen Set, So A Quota Of Zero Must Refuse Every Counter Rather Than Index An Empty Set; "ChallengeQuota.Derive" Yields Zero For A Non-Positive Interval
+    [Test]
+    public async Task A_Window_With_No_Quota_Refuses_Every_Counter()
+    {
+        ChallengeWindow window = new (challenge: 42, quota: 0);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(window.TryAdmit(0, out ChallengeAdmission atZero)).IsFalse();
+            await Assert.That(atZero).IsEqualTo(ChallengeAdmission.OverQuota);
+
+            await Assert.That(window.TryAdmit(ushort.MaxValue, out ChallengeAdmission atMaximum)).IsFalse();
+            await Assert.That(atMaximum).IsEqualTo(ChallengeAdmission.OverQuota);
+        }
+    }
 }
