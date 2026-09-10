@@ -2432,6 +2432,72 @@ git add source/COMPEL/Services/Proxy/ClientPacketReader.cs source/COMPEL/Service
 git commit -m "Refuse A Challenge The Proxy Never Issued"
 ```
 
+- [ ] **Step 11: Make the tests pin the ordering rather than the outcomes**
+
+The tests in Step 3 as first written assert each branch's *outcome* and not one of them asserts an *ordering relation*, which was the stated point of the task. Reviewing them against deliberate mutations, three survived green: moving the arrival charge after the allowance check, moving the allowance check after the length guard, and deleting `ChargeViolation` from the weighted `Drop` entirely. Worse, the rig swallowed a faulted receive loop, so a dead pipeline satisfied every negative assertion exactly as a correct refusal did.
+
+Four changes fix that, and they matter more than the tests they replace.
+
+**The rig must not tolerate a faulted loop.** Replace the blanket catch in `DisposeAsync`:
+
+```csharp
+            // A Faulted Receive Loop Must Fail The Test Rather Than Be Swallowed: Every Assertion Here Is A Negative, And A Dead Loop Satisfies A Negative Just As Well As A Correct Refusal Does
+            try { await run; }
+            catch (OperationCanceledException) { }
+```
+
+**Every negative needs a liveness check**, so add a `Refuses` helper to the rig and use it in place of a bare `Relays(...)` negative throughout:
+
+```csharp
+        /// <summary>
+        ///     Sends the datagram and reports whether the forwarder refused it: that it did not reach the server, and that the forwarder counted a refusal.
+        ///     Both halves matter, because a receive timeout on its own is also what a dead receive loop looks like.
+        /// </summary>
+        internal async Task<bool> Refuses(byte[] datagram)
+        {
+            int refusedBefore = Forwarder.DroppedDatagramCount;
+
+            bool relayed = await Relays(datagram);
+
+            return relayed is false && Forwarder.DroppedDatagramCount > refusedBefore;
+        }
+```
+
+**Something must observe that the forwarder charges the container**, or the escalation model is untested end to end. In `A_Challenge_The_Proxy_Never_Issued_Is_Dropped`, capture `probe.Scores.Score(probe.ClientEndPoint)` before the refusal and assert it rose by at least `ViolationScoreContainer.ChallengeViolationWeight` after.
+
+**And one test must pin the order.** A valid datagram cannot do it, because it is refused with the allowance check in any of three positions. A *short* datagram from an actioned source can, because the two candidate orderings charge it differently:
+
+```csharp
+    // Pins The Order Rather Than The Outcome: An Actioned Source's Short Datagram Must Be Refused By The Allowance Check Before The Length Guard Can Charge It
+    [Test]
+    public async Task An_Actioned_Source_Is_Refused_Before_The_Length_Guard_Charges_It()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await probe.Establish();
+
+        while (probe.Scores.IsWithinAllowance(probe.ClientEndPoint))
+            probe.Scores.ChargeViolation(probe.ClientEndPoint, ViolationScoreContainer.RateLimitViolationWeight);
+
+        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+
+        await Assert.That(await probe.Refuses(new byte[8])).IsTrue();
+
+        // Exactly The Arrival And Nothing Else: If The Arrival Were Charged After The Allowance Check The Score Would Not Move, And If The Length Guard Ran First It Would Rise By "TooShortViolationWeight" As Well
+        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(scoreBefore + ViolationScoreContainer.PacketScore);
+    }
+```
+
+The figure is deterministic: `Establish` leaves the score at 1, the loop steps by 100 and stops the instant it exceeds 4000, landing on exactly 4001, and nothing drains during the test because the drain runs on the maintenance loop the rig never starts. Both mutations were confirmed to fail it in practice rather than only in argument: the length guard first gives `scoreBefore + 201`, the arrival charge moved gives `scoreBefore + 0`. Keep the original outcome-only test alongside it under its own name, converted to `Refuses` - an actioned source having a valid datagram refused is still worth asserting.
+
+Alongside these, five smaller corrections: restore the comment recording why the drop reasons are string literals rather than `admission.ToString()` (deleted by this task's own Step 5 block, and the only record of a decision made to remove a per-datagram allocation); move the `reportedDrops.Count` bound check *after* the `TryAdd`, because `ConcurrentDictionary.Count` acquires every lock in the table and the drop path is the flood path; narrow the `Drop` summary, which claimed a flood cannot become a log flood when a flood rotating its source port defeats an endpoint-keyed throttle entirely; make the weighted `Drop` overload `void`, since its `bool` is discarded at all five call sites; and refresh the test class summary, which had gone stale in exactly the way this task was correcting elsewhere.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git commit -am "Pin The Pipeline Ordering Rather Than Its Outcomes"
+```
+
 ---
 
 ## Final Verification
