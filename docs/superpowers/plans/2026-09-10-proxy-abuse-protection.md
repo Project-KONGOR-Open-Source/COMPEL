@@ -1947,7 +1947,25 @@ Replace `A_Challenge_Older_Than_The_Previous_One_Is_Not_Matched` in `SessionChal
     }
 ```
 
-Keep the other existing tests in that file unchanged: the renewal-grace test, the counter-retention test, the unknown-challenge test and the no-rotation test all still hold.
+Two of the existing tests in that file need a touch; the renewal-grace and counter-retention tests are untouched and still hold.
+
+`An_Unknown_Challenge_Is_Not_Matched` asserts both `Match(999)` and `Match(0)` are null. The second is now asserting the defect, because challenge zero is deliberately a real, always-matched window — drop that assertion and unwrap the now-pointless `Assert.Multiple()`:
+
+```csharp
+    [Test]
+    public async Task An_Unknown_Challenge_Is_Not_Matched()
+    {
+        SessionChallengeState state = new ();
+
+        state.Rotate(challenge: 100, quota: 64);
+
+        await Assert.That(state.Match(999)).IsNull();
+    }
+```
+
+Zero is not left uncovered by that: `The_Unauthenticated_Challenge_Is_Always_Matched_And_Detects_A_Duplicate` asserts the opposite deliberately.
+
+Then rename `No_Challenge_Is_Matched_Before_The_First_Rotation` to `No_Issued_Challenge_Is_Matched_Before_The_First_Rotation`. Its body stays correct, because it matches a non-zero unissued value, but the name now overclaims — challenge zero *is* matched before the first rotation.
 
 - [ ] **Step 6: Run the tests to verify they fail**
 
