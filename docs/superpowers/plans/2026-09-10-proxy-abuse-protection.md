@@ -1726,11 +1726,678 @@ git commit -m "Report Proxy Datagram Drops Through The Control Plane"
 
 ---
 
+### Task 7: Make The Actioned State Recoverable And Retain More Challenges
+
+**Files:**
+- Modify: `source/COMPEL/Services/Proxy/ViolationScoreContainer.cs`
+- Modify: `source/COMPEL/Services/Proxy/SessionChallengeState.cs`
+- Test: `source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs`
+- Test: `source/COMPEL.Tests/Services/Proxy/SessionChallengeStateTests.cs`
+
+**Interfaces:**
+- Consumes: `ChallengeQuota.UnauthenticatedPacketQuota`, `ChallengeWindow`.
+- Produces: `ViolationScoreContainer.ChallengeViolationWeight`; `SessionChallengeState.UnauthenticatedChallenge`, `SessionChallengeState.RetainedChallengeCount`, `SessionChallengeState.UnauthenticatedResetRotations`. `ViolationScoreContainer.ActionedViolationWeight` is **removed**.
+
+**Why this task exists.** Two defects found reviewing Task 5, both traced to porting the reference faithfully without accounting for a difference in enforcement model.
+
+**The actioned state is currently terminal for a live client.** Above the threshold each datagram costs 11 — one for the arrival plus ten for `ActionedViolationWeight` — against a drain of 140 a second, so break-even is 12.7 datagrams a second. Any real client sending faster accumulates instead of recovering and is pinned at `MaximumViolationScore`. Recovery needs roughly 143 seconds of near-silence, which a game client cannot do. And because the forwarder checks the allowance before matching the challenge, a client that has since re-authenticated and is sending perfectly valid, correctly-counted datagrams still has every one dropped: good behaviour cannot clear the score, only silence can.
+
+In the reference this is safe, because crossing the threshold triggers a firewall ban that stops the packets arriving — so the score decays and the ban is time-boxed. COMPEL's response is a local application-layer drop, so the client keeps sending and the score never decays. The same code has the opposite effect.
+
+**So the escalation is removed.** Recovery then depends on rate, which is what the drain rate was chosen to express: a source under `EstimatedPacketsPerSecond` recovers, a source above it stays actioned. A saturated flooder that keeps flooding decays below the threshold after about 143 seconds and then needs roughly twenty violations to cross back, leaking a handful of datagrams per cycle, which is immaterial against the alternative of blackholing a legitimate player for a whole match.
+
+**Two retained challenges is not enough.** A client at thirty packets a second that loses two consecutive renewals has its challenge evicted while its counter is legitimately around 600 — far past the unauthenticated total of 100 — so every subsequent datagram costs 201 and twenty of them cross the threshold in under a second. The reference retains `KEEP_CHALLENGES` (6) at a five-second refresh, thirty seconds of history; six at COMPEL's ten-second renewal gives sixty. Six windows is 8.6 kilobytes per session against 2.9, still nothing at two dozen sessions.
+
+**Challenge zero becomes a real window.** The reference seeds `responses[0]` and runs the same duplicate check over it as over any issued challenge, resetting it every `CLEAR_UNAUTHENTICATED` (3) refreshes. Modelling it as a window with a quota of `UnauthenticatedPacketQuota` gives the duplicate check for free and lets the forwarder take one path instead of two.
+
+- [ ] **Step 1: Fact verification**
+
+```bash
+P="source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp"
+grep -nE "define (KEEP_CHALLENGES|CLEAR_UNAUTHENTICATED|MAX_CTR_UNAUTHENTICATED|WARN_CHALLENGE|WARN_BANNED)" "$P"
+sed -n '659,672p' "$P"
+sed -n '691,694p' "$P"
+sed -n '791,800p' "$P"
+grep -n "responses\[0\]" "$P"
+```
+
+Expected, and each one is load-bearing below:
+
+- `KEEP_CHALLENGES 6`, `CLEAR_UNAUTHENTICATED 3`, `MAX_CTR_UNAUTHENTICATED 100`, `WARN_CHALLENGE 100`, `WARN_BANNED 10`.
+- `if (*challenge == 0)` guards the unauthenticated case, charging `WARN_UNAUTHENTICATED` once the counter reaches the total.
+- `responses.find(*challenge)` runs after **both** the zero and non-zero branches, so the duplicate check covers challenge zero as well.
+- an unmatched challenge falls to the `else` that charges `WARN_CHALLENGE` and returns false — a separate case from challenge zero.
+- `responses[0]` is seeded at line 1654 and reset in the housekeeping pass, confirming challenge zero is a tracked bucket rather than a bypass.
+
+- [ ] **Step 2: Replace the two score tests that assert the escalation**
+
+In `ViolationScoreContainerTests.cs`, delete `An_Actioned_Source_That_Keeps_Sending_Climbs_Above_The_Threshold` and `A_Source_That_Kept_Pushing_Takes_Longer_To_Recover_Than_One_That_Stopped` — both assert the behaviour being removed — and add these two, which assert what replaces it:
+
+```csharp
+    // The Actioned State Must Clear Itself For A Client Sending At A Normal Rate, Because The Proxy Drops Locally Rather Than Blocking The Traffic, So The Client Keeps Sending And Nothing Else Would Ever Clear It
+    [Test]
+    public async Task An_Actioned_Source_Sending_Below_The_Expected_Rate_Recovers()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        while (container.IsWithinAllowance(Source()))
+            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+
+        // Thirty Datagrams A Second Is Ordinary Game Traffic, Well Under The Expected Rate
+        for (int second = 0; second < 60; second++)
+        {
+            for (int packet = 0; packet < 30; packet++)
+                container.ChargeArrival(Source());
+
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
+
+        await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
+    }
+
+    [Test]
+    public async Task An_Actioned_Source_Sending_Above_The_Expected_Rate_Stays_Actioned()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        while (container.IsWithinAllowance(Source()))
+            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+
+        for (int second = 0; second < 60; second++)
+        {
+            for (int packet = 0; packet < ViolationScoreContainer.EstimatedPacketsPerSecond * 2; packet++)
+                container.ChargeArrival(Source());
+
+            clock.Advance(OneSecond);
+            container.Drain();
+        }
+
+        await Assert.That(container.IsWithinAllowance(Source())).IsFalse();
+    }
+```
+
+Then update the weight array in `Every_Weight_Is_Below_The_Actionable_Threshold`: remove `ActionedViolationWeight` and add `ChallengeViolationWeight`, leaving the rest as they are.
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `dotnet build source/COMPEL.slnx`
+Expected: FAIL — `ChallengeViolationWeight` does not exist, and `ActionedViolationWeight` is still referenced.
+
+- [ ] **Step 4: Change the score container**
+
+Replace the `ActionedViolationWeight` constant with the challenge weight, keeping it in reference order beside the others:
+
+```csharp
+    // "WARN_CHALLENGE": A Challenge The Session Never Issued, Which The Reference Treats Separately From A Client That Has Not Been Challenged Yet
+    internal const int ChallengeViolationWeight = 100;
+```
+
+Replace `ChargeArrival` and delete `Arrived` entirely:
+
+```csharp
+    /// <summary>
+    ///     Charges <paramref name="source"/> for the arrival of one datagram, whatever it contains.
+    ///     Called exactly once per datagram, before any check, so that a flood carrying no detectable violation is still scored.
+    ///     Nothing extra is charged for a source that is already actionable: the proxy drops locally rather than blocking the traffic, so an actioned client keeps sending, and charging it further would make the state permanent for any client above roughly a tenth of the expected rate.
+    ///     Recovery therefore depends on rate, which is what <see cref="EstimatedPacketsPerSecond"/> expresses: a source below it recovers, a source above it stays actioned.
+    /// </summary>
+    internal void ChargeArrival(IPEndPoint source)
+        => scores.AddOrUpdate(source, PacketScore, static (_, score) => Math.Min(score + PacketScore, MaximumViolationScore));
+```
+
+`Arrived` goes with it: with nothing to escalate, an arrival is an ordinary saturating add. Leave `ChargeViolation` exactly as it is rather than having `ChargeArrival` delegate to it — its summary describes charging a specific violation on top of an arrival, which would stop being true of every caller.
+
+Update the `MaximumViolationScore` comment, which currently explains itself in terms of the escalation that is going away:
+
+```csharp
+    // "MAX_WARN_COUNT": Where This Implementation Saturates Accumulation. The Reference Applies This Bound Only To Its Above-Threshold Escalation And Lets Its Own Count Climb Unbounded; Saturating Keeps The Arithmetic In Range And Bounds The Worst Case To Roughly Two And A Half Minutes Of Drain At A Standstill
+    internal const int MaximumViolationScore = 20000;
+```
+
+- [ ] **Step 5: Write the failing challenge state tests**
+
+Replace `A_Challenge_Older_Than_The_Previous_One_Is_Not_Matched` in `SessionChallengeStateTests.cs`, which asserts the two-deep behaviour being widened, with these:
+
+```csharp
+    // Six Retained Challenges Is Sixty Seconds Of History At The Renewal Interval, So Losing Several Consecutive Renewals Cannot Strand A Client Whose Counter Has Legitimately Run Past The Unauthenticated Total
+    [Test]
+    public async Task Every_Retained_Challenge_Is_Still_Matched()
+    {
+        SessionChallengeState state = new ();
+
+        for (uint challenge = 1; challenge <= SessionChallengeState.RetainedChallengeCount; challenge++)
+            state.Rotate(challenge, quota: 64);
+
+        using (Assert.Multiple())
+        {
+            for (uint challenge = 1; challenge <= SessionChallengeState.RetainedChallengeCount; challenge++)
+            {
+                uint issued = challenge;
+
+                await Assert.That(state.Match(issued)).IsNotNull();
+            }
+        }
+    }
+
+    [Test]
+    public async Task A_Challenge_Older_Than_The_Retained_History_Is_Not_Matched()
+    {
+        SessionChallengeState state = new ();
+
+        for (uint challenge = 1; challenge <= SessionChallengeState.RetainedChallengeCount + 1; challenge++)
+            state.Rotate(challenge, quota: 64);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(state.Match(1)).IsNull();
+            await Assert.That(state.Match(2)).IsNotNull();
+        }
+    }
+
+    // The Reference Runs Its Duplicate Check Over Challenge Zero Exactly As Over An Issued Challenge, So It Must Be A Window Rather Than A Bare Ceiling
+    [Test]
+    public async Task The_Unauthenticated_Challenge_Is_Always_Matched_And_Detects_A_Duplicate()
+    {
+        SessionChallengeState state = new ();
+
+        ChallengeWindow? before = state.Match(SessionChallengeState.UnauthenticatedChallenge);
+
+        state.Rotate(challenge: 100, quota: 64);
+
+        ChallengeWindow? after = state.Match(SessionChallengeState.UnauthenticatedChallenge);
+
+        using (Assert.Multiple())
+        {
+            // It Is Available Before Any Challenge Has Been Issued, Because That Is Exactly When A Client Uses It
+            await Assert.That(before).IsNotNull();
+            await Assert.That(after).IsNotNull();
+
+            await Assert.That(after?.TryAdmit(7, out _)).IsTrue();
+            await Assert.That(after?.TryAdmit(7, out _)).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task The_Unauthenticated_Window_Is_Reset_Periodically()
+    {
+        SessionChallengeState state = new ();
+
+        state.Match(SessionChallengeState.UnauthenticatedChallenge)?.TryAdmit(7, out _);
+
+        for (uint rotation = 1; rotation <= SessionChallengeState.UnauthenticatedResetRotations; rotation++)
+            state.Rotate(rotation, quota: 64);
+
+        // Without The Reset Its Small Total Would Be A Once-Per-Session Budget, So A Long-Lived Session Could Never Use It Again
+        await Assert.That(state.Match(SessionChallengeState.UnauthenticatedChallenge)?.TryAdmit(7, out _)).IsTrue();
+    }
+
+    [Test]
+    public async Task The_Unauthenticated_Window_Survives_A_Rotation_That_Does_Not_Reset_It()
+    {
+        SessionChallengeState state = new ();
+
+        state.Match(SessionChallengeState.UnauthenticatedChallenge)?.TryAdmit(7, out _);
+
+        state.Rotate(challenge: 100, quota: 64);
+
+        await Assert.That(state.Match(SessionChallengeState.UnauthenticatedChallenge)?.TryAdmit(7, out _)).IsFalse();
+    }
+```
+
+Keep the other existing tests in that file unchanged: the renewal-grace test, the counter-retention test, the unknown-challenge test and the no-rotation test all still hold.
+
+- [ ] **Step 6: Run the tests to verify they fail**
+
+Run: `dotnet build source/COMPEL.slnx`
+Expected: FAIL — `RetainedChallengeCount`, `UnauthenticatedChallenge` and `UnauthenticatedResetRotations` do not exist.
+
+- [ ] **Step 7: Widen the challenge state**
+
+Replace the fields and both methods of `SessionChallengeState`, keeping the class summary but extending it:
+
+```csharp
+/// <summary>
+///     The challenges one client session may currently use: the several most recently issued to it, and the window a client uses before it has accepted any.
+///     Several are retained because a challenge is renewed while the client is sending, so datagrams already in flight carry an earlier challenge and a counter that has not restarted, and because a client whose renewals are lost keeps using the last one it accepted.
+///     Matching only the newest challenge would drop those datagrams on every renewal; matching only two would strand a client that lost a pair of consecutive renewals.
+/// </summary>
+internal sealed class SessionChallengeState
+{
+    // Zero Marks A Client That Has Not Accepted A Challenge Yet. "SendChallenge" Never Issues It, So It Can Never Collide With A Real Challenge
+    internal const uint UnauthenticatedChallenge = 0;
+
+    // "KEEP_CHALLENGES": How Many Issued Challenges Stay Valid. At The Renewal Interval This Is A Minute Of History, Against The Reference's Thirty Seconds
+    internal const int RetainedChallengeCount = 6;
+
+    // "CLEAR_UNAUTHENTICATED": Renewals Between Resets Of The Pre-Authentication Window, So Its Small Total Is A Recurring Allowance Rather Than A Once-Per-Session Budget
+    internal const int UnauthenticatedResetRotations = 3;
+
+    private readonly Lock stateLock = new ();
+
+    // Newest First, Bounded By "RetainedChallengeCount". A List Rather Than A Queue Because It Is Searched On The Datagram Path And Six Elements Search Faster Than They Hash
+    private readonly List<ChallengeWindow> retained = new (RetainedChallengeCount);
+
+    private ChallengeWindow unauthenticated = NewUnauthenticatedWindow();
+
+    private int rotationsSinceUnauthenticatedReset;
+
+    /// <summary>
+    ///     Records a newly issued challenge, retaining the most recent <see cref="RetainedChallengeCount"/> of them and discarding the oldest.
+    ///     The caller must not issue a challenge equal to one already retained: a repeat would build a fresh window for that value and silently discard the counters the client has already consumed under it.
+    ///     A monotonic issuer satisfies this on its own, but a random one would not, so the reference checks a new challenge against its whole retained history before accepting it.
+    /// </summary>
+    internal void Rotate(uint challenge, ushort quota)
+    {
+        lock (stateLock)
+        {
+            retained.Insert(0, new ChallengeWindow(challenge, quota));
+
+            if (retained.Count > RetainedChallengeCount)
+                retained.RemoveAt(retained.Count - 1);
+
+            if (++rotationsSinceUnauthenticatedReset < UnauthenticatedResetRotations)
+                return;
+
+            rotationsSinceUnauthenticatedReset = 0;
+            unauthenticated = NewUnauthenticatedWindow();
+        }
+    }
+
+    /// <summary>
+    ///     The window for the challenge the client echoed, or <see langword="null"/> when it echoed a non-zero challenge this session never issued or no longer retains.
+    ///     <see cref="UnauthenticatedChallenge"/> always matches, because a client that has not been challenged yet has nothing else to echo.
+    /// </summary>
+    internal ChallengeWindow? Match(uint challenge)
+    {
+        lock (stateLock)
+        {
+            if (challenge is UnauthenticatedChallenge)
+                return unauthenticated;
+
+            foreach (ChallengeWindow window in retained)
+                if (window.Challenge == challenge)
+                    return window;
+
+            return null;
+        }
+    }
+
+    private static ChallengeWindow NewUnauthenticatedWindow() => new (UnauthenticatedChallenge, ChallengeQuota.UnauthenticatedPacketQuota);
+}
+```
+
+- [ ] **Step 8: Run the tests to verify they pass**
+
+Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
+Expected: build succeeds with 0 warnings; all tests pass.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add source/COMPEL/Services/Proxy/ViolationScoreContainer.cs source/COMPEL/Services/Proxy/SessionChallengeState.cs source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs source/COMPEL.Tests/Services/Proxy/SessionChallengeStateTests.cs
+git commit -m "Let An Actioned Source Recover And Retain More Challenges"
+```
+
+---
+
+### Task 8: Separate The Unknown Challenge From The Unauthenticated One, And Test The Ordering
+
+**Files:**
+- Modify: `source/COMPEL/Services/Proxy/ClientPacketReader.cs`
+- Modify: `source/COMPEL/Services/Proxy/UDPForwarder.cs`
+- Test: `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
+
+**Interfaces:**
+- Consumes: `SessionChallengeState.UnauthenticatedChallenge`, `ViolationScoreContainer.ChallengeViolationWeight` (both from Task 7).
+- Produces: `ClientPacketReader.ChallengeOffset` and `ClientPacketReader.CounterOffset` become `internal`; `UDPForwarder.Drop` returns whether the refusal was the first reported for that source.
+
+**Why this task exists.** Four more defects found reviewing Task 5.
+
+**The unauthenticated branch relays traffic the reference blocks.** The reference distinguishes three cases; the forwarder currently collapses them into two. Challenge zero means a client that has not been challenged yet: it is capped at a small total **and** duplicate-checked, because `responses[0]` is a seeded bucket like any other (`main.cpp:1654`, checked at `:692`, reset in the housekeeping pass). A non-zero challenge the proxy never issued is a different thing, charged `WARN_CHALLENGE` and dropped (`main.cpp:797`). COMPEL treats both as unauthenticated, applies only a ceiling on a client-supplied field, and records nothing.
+
+The consequence: a source that fixes its counter at zero and sends minimum-length datagrams at the expected rate has **every one relayed, indefinitely**, and because its score sits exactly at break-even nothing is ever scored or logged. Task 7 makes challenge zero a real window, so the fix here is to let the one `TryAdmit` path handle it and to give an unmatched challenge its own branch.
+
+**`reportedDrops` grows without bound, and hides the failure it was added to surface.** Nothing removes entries — not the idle sweep, not `Dispose`. It is the only structure this feature adds with no reclamation. The memory is the lesser half: because suppression is keyed on the endpoint and never expires, only a source's **first** drop reason is ever logged. A client whose first drop is a harmless short datagram during connect will never produce another log line, including if it is later actioned and blackholed for the rest of a match. The reference caps its equivalent maps wholesale (`main.cpp:1194-1197`).
+
+**A failed session creation escapes the pipeline entirely.** `GetOrCreateSession` throws when a socket cannot be opened, and the `continue` that follows neither charges nor counts the datagram, and logs unthrottled — so under a flood that exhausts file descriptors, the abuse protection is disabled for new sources at exactly the moment the proxy is being exhausted, and the log call that the drop throttle exists to prevent runs once per datagram.
+
+**Two comments and the class summary describe behaviour the class no longer has.**
+
+- [ ] **Step 1: Fact verification**
+
+```bash
+P="source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp"
+sed -n '659,672p' "$P"
+sed -n '791,800p' "$P"
+sed -n '1194,1197p' "$P"
+```
+
+Expected: the `if (*challenge == 0)` branch capping the counter at `MAX_CTR_UNAUTHENTICATED` with `WARN_UNAUTHENTICATED`; a separate `else` charging `WARN_CHALLENGE` for a challenge absent from `responses`; and `if (warns.size() >= 1000) { warns.clear(); }`, the wholesale cap this task mirrors for the drop-report map.
+
+- [ ] **Step 2: Expose the two offsets the tests need**
+
+In `ClientPacketReader.cs`, change `ChallengeOffset` and `CounterOffset` from `private` to `internal`, leaving the comment above them as it is. The forwarder tests build datagrams the reader must parse, so they need the same two offsets; writing `28` and `32` into the test file instead would reintroduce exactly the drift this class exists to prevent.
+
+- [ ] **Step 3: Write the failing ordering tests**
+
+Add to `UDPForwarderTests.cs`. First the rig and the datagram builder, beside the existing private helpers:
+
+```csharp
+    private static byte[] GameDatagram(uint challenge, ushort counter)
+    {
+        byte[] datagram = new byte[ClientPacketReader.MinimumLength(ProxyForwarderKind.Game)];
+
+        BinaryPrimitives.WriteUInt32LittleEndian(datagram.AsSpan(ClientPacketReader.ChallengeOffset), challenge);
+        BinaryPrimitives.WriteUInt16LittleEndian(datagram.AsSpan(ClientPacketReader.CounterOffset), counter);
+
+        return datagram;
+    }
+
+    /// <summary>
+    ///     A forwarder on loopback with a server behind it and a client in front, so the tests below can assert what does and does not reach the server.
+    ///     A negative assertion costs a receive timeout, so these tests are deliberately few and each asserts one branch of the pipeline.
+    /// </summary>
+    private sealed class ForwarderProbe : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource lifetime = new ();
+        private readonly Task run;
+
+        internal ForwarderProbe()
+        {
+            int publicPort = FreeUDPPort();
+
+            Server = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            Server.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            int localPort = Server.LocalEndPoint is IPEndPoint boundServer ? boundServer.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
+
+            Scores = new ViolationScoreContainer(TimeProvider.System);
+            Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, NullLogger.Instance);
+
+            run = Forwarder.Run(lifetime.Token);
+
+            Client = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            Client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            PublicEndPoint = new IPEndPoint(IPAddress.Loopback, publicPort);
+        }
+
+        internal Socket Server { get; }
+
+        internal Socket Client { get; }
+
+        internal UDPForwarder Forwarder { get; }
+
+        internal ViolationScoreContainer Scores { get; }
+
+        internal IPEndPoint PublicEndPoint { get; }
+
+        internal IPEndPoint ClientEndPoint => Client.LocalEndPoint is IPEndPoint boundClient ? boundClient : throw new InvalidOperationException("Could Not Determine The Client Endpoint");
+
+        /// <summary>
+        ///     Sends the datagram and reports whether it reached the server.
+        /// </summary>
+        internal async Task<bool> Relays(byte[] datagram)
+        {
+            await Client.SendToAsync(datagram, SocketFlags.None, PublicEndPoint);
+
+            return await TryReceive(Server) is not null;
+        }
+
+        /// <summary>
+        ///     Establishes the session, which is what causes a challenge to be issued, and returns the challenge the forwarder issued.
+        /// </summary>
+        internal async Task<uint> Establish()
+        {
+            await Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+            return await ReadOneChallengeValue(Forwarder, Client);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await lifetime.CancelAsync();
+
+            try { await run; } catch (Exception) { }
+
+            Client.Dispose();
+            Forwarder.Dispose();
+            Server.Dispose();
+            lifetime.Dispose();
+        }
+    }
+```
+
+Then the tests:
+
+```csharp
+    [Test]
+    public async Task A_Datagram_Echoing_An_Issued_Challenge_Is_Relayed()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint challenge = await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
+    }
+
+    // The Duplicate Check Is What Stops A Captured Datagram Being Replayed, And Nothing Above The Forwarder Exercises It
+    [Test]
+    public async Task A_Repeated_Counter_Under_One_Challenge_Is_Dropped()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint challenge = await probe.Establish();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 5))).IsTrue();
+            await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 5))).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task A_Counter_At_The_Quota_Is_Dropped()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint challenge = await probe.Establish();
+
+        ushort quota = ChallengeQuota.ForKind(ProxyForwarderKind.Game, TimeSpan.FromSeconds(10));
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge, quota))).IsFalse();
+    }
+
+    // A Challenge The Proxy Never Issued Is Not The Same As A Client That Has Not Been Challenged Yet: The Reference Charges It Separately And Drops It, Rather Than Admitting It Under The Unauthenticated Allowance
+    [Test]
+    public async Task A_Challenge_The_Proxy_Never_Issued_Is_Dropped()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge: 0xDEADBEEF, counter: 1))).IsFalse();
+    }
+
+    [Test]
+    public async Task An_Unauthenticated_Counter_At_The_Total_Is_Dropped()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, ChallengeQuota.UnauthenticatedPacketQuota))).IsFalse();
+    }
+
+    // The Allowance Is Checked Before The Challenge Is Matched, So An Actioned Source Is Refused Whatever It Sends; This Is The One Ordering Relation No Unit Test Can Reach
+    [Test]
+    public async Task An_Actioned_Source_Has_Even_A_Valid_Datagram_Dropped()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint challenge = await probe.Establish();
+
+        // Driven Over The Threshold Directly, So This Test Is About The Ordering Rather Than About Accumulating A Score
+        while (probe.Scores.IsWithinAllowance(probe.ClientEndPoint))
+            probe.Scores.ChargeViolation(probe.ClientEndPoint, ViolationScoreContainer.TooShortViolationWeight);
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsFalse();
+    }
+```
+
+Also replace the fire-and-forget in `A_Short_Datagram_Is_Dropped_Rather_Than_Relayed` with the rig, which removes the divergence from the file's other tests and the token source disposed while `Run` still holds a registration on it:
+
+```csharp
+    // A Datagram Below The Minimum Length Must Never Reach The Server, Because The Reader Refuses To Read Its Fields
+    [Test]
+    public async Task A_Short_Datagram_Is_Dropped_Rather_Than_Relayed()
+    {
+        await using ForwarderProbe probe = new ();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(await probe.Relays(new byte[8])).IsFalse();
+            await Assert.That(probe.Forwarder.DroppedDatagramCount).IsGreaterThan(0);
+        }
+    }
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
+Expected: build succeeds; `A_Challenge_The_Proxy_Never_Issued_Is_Dropped` fails because an unknown challenge is currently admitted under the unauthenticated allowance, and `A_Repeated_Counter_Under_One_Challenge_Is_Dropped` may fail on its second assertion once challenge zero is a window. The others should pass, which is the point: they pin behaviour the mutations in the Task 5 review could have silently broken.
+
+- [ ] **Step 5: Take the one path through the challenge checks**
+
+In `UDPForwarder.Run`, replace the whole `window is null` / `else if` construct with:
+
+```csharp
+            ChallengeWindow? window = session.Challenges.Match(challenge);
+
+            // A Non-Zero Challenge This Session Never Issued Or No Longer Retains. The Reference Treats This Separately From A Client That Has Not Been Challenged Yet, Which Echoes Zero And Matches The Session's Unauthenticated Window
+            if (window is null)
+            {
+                Drop(client, ViolationScoreContainer.ChallengeViolationWeight, "Unknown Challenge");
+
+                continue;
+            }
+
+            // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
+            if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
+            {
+                if (admission is ChallengeAdmission.Duplicate)
+                    Drop(client, ViolationScoreContainer.DuplicateViolationWeight, "Duplicate");
+
+                // A Client That Has Not Accepted A Challenge Yet Is Held To A Small Total Rather Than A Rate, And The Reference Weights Exceeding That Total More Heavily Than An Ordinary Rate Limit
+                else if (challenge is SessionChallengeState.UnauthenticatedChallenge)
+                    Drop(client, ViolationScoreContainer.UnauthenticatedViolationWeight, "Unauthenticated");
+
+                else
+                    Drop(client, ViolationScoreContainer.RateLimitViolationWeight, "Over Quota");
+
+                continue;
+            }
+```
+
+- [ ] **Step 6: Charge and throttle the failed session creation**
+
+Replace the `catch` around `GetOrCreateSession`:
+
+```csharp
+            catch (Exception exception)
+            {
+                // Counted, Charged And Throttled Like Any Other Refusal. Unthrottled And Unscored, This Path Disabled The Abuse Protection For New Sources At Exactly The Moment The Proxy Was Being Exhausted, And Logged Once Per Datagram
+                // Only The Arrival Is Charged And No Violation Weight, Because A Session Can Fail To Open For Reasons That Are Not The Client's Fault
+                scoreContainer.ChargeArrival(client);
+
+                if (Drop(client, "Session Creation Failed"))
+                    logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client);
+
+                continue;
+            }
+```
+
+- [ ] **Step 7: Reclaim the drop reports**
+
+Beside the other constants in `UDPForwarder`:
+
+```csharp
+    // The Reference Clears Its Equivalent Maps Wholesale Once They Pass A Thousand Entries Rather Than Retaining One Per Endpoint For The Life Of The Process
+    private const int ReportedDropLimit = 1000;
+```
+
+Make the unweighted `Drop` report whether it logged, so a caller holding extra detail can log under the same throttle, and bound the map:
+
+```csharp
+    private bool Drop(IPEndPoint client, int weight, string reason)
+    {
+        scoreContainer.ChargeViolation(client, weight);
+
+        return Drop(client, reason);
+    }
+
+    /// <summary>
+    ///     Counts a refused datagram and logs the reason once per source, so that a flood cannot become a log flood.
+    ///     Returns whether this was the first refusal reported for the source, so a caller with more detail can log it under the same throttle.
+    /// </summary>
+    private bool Drop(IPEndPoint client, string reason)
+    {
+        Interlocked.Increment(ref droppedDatagramCount);
+
+        if (reportedDrops.Count >= ReportedDropLimit)
+            reportedDrops.Clear();
+
+        if (reportedDrops.TryAdd(client, true) is false)
+            return false;
+
+        logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
+
+        return true;
+    }
+```
+
+In `EvictIdleSessions`, drop the report alongside the session it belongs to, so a client that reconnects is reported again rather than being silently suppressed for the life of the process. Add this beside the existing removal of the session:
+
+```csharp
+                reportedDrops.TryRemove(client, out _);
+```
+
+Match the identifier the surrounding loop already uses for the endpoint rather than introducing a new one.
+
+- [ ] **Step 8: Correct the summary and the two comments**
+
+The class summary still describes the contract this work ended. Replace the sentence that says datagrams are forwarded and replies relayed back with one that says what the class now does: it validates each client datagram's length, challenge and counter, scores abusive sources and drops them, and relays only what passes, while the server's replies are relayed back unexamined.
+
+Then correct the comment above the allowance check, which currently claims the refusal happens "Before Anything Reads Its Datagram" — true of the fields, but by that line the datagram has already created a session, had a challenge issued to it and refreshed the idle timer:
+
+```csharp
+            // A Source Already Over The Threshold Is Refused Before Any Field Of Its Datagram Is Read. The Session And Its Challenge Already Exist By This Point, Because A Client Must Be Challenged Before It Can Send Anything Valid
+```
+
+- [ ] **Step 9: Run the tests to verify they pass**
+
+Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
+Expected: build succeeds with 0 warnings; all tests pass.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add source/COMPEL/Services/Proxy/ClientPacketReader.cs source/COMPEL/Services/Proxy/UDPForwarder.cs source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs
+git commit -m "Refuse A Challenge The Proxy Never Issued"
+```
+
+---
+
 ## Final Verification
 
 - [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
-- [ ] `dotnet test source/COMPEL.slnx` passes, with at least 40 new tests across the six new units.
+- [ ] `dotnet test source/COMPEL.slnx` passes with no failures. Tasks 7 and 8 replace seven tests that asserted behaviour they deliberately remove, so the useful check is the suite total: it stood at 78 before Task 1 and should end at no fewer than 125.
 - [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
 - [ ] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
+- [ ] An actioned source sending at an ordinary game rate recovers rather than staying refused, because the proxy drops locally instead of blocking the traffic.
+- [ ] A challenge the proxy never issued is refused rather than admitted under the unauthenticated allowance.
 - [ ] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
 - [ ] Every new constant carries the reference `#define` name in a trailing comment.
