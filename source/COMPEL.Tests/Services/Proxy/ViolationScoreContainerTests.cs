@@ -211,6 +211,22 @@ public sealed class ViolationScoreContainerTests
         }
     }
 
+    // Every Other Advance In This Suite Is A Whole Multiple Of 50 Milliseconds, Which Is Exactly When The Drain Is A Whole Number, So Without This The Truncation Above Is Never Exercised
+    [Test]
+    public async Task A_Drain_Over_A_Fractional_Interval_Truncates_The_Remaining_Score()
+    {
+        ControllableTimeProvider clock = new ();
+        ViolationScoreContainer container = new (clock);
+
+        container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+
+        // 1234 Milliseconds Drains 172.76, So 200 Must Leave 27, Not The 28 A Whole-Number Drain Would Leave
+        clock.Advance(TimeSpan.FromMilliseconds(1234));
+        container.Drain();
+
+        await Assert.That(container.Score(Source())).IsEqualTo(27);
+    }
+
     // The Reference Waits For Enough Elapsed Time Rather Than Draining A Partial Amount, And Must Not Discard The Remainder When It Does
     [Test]
     public async Task A_Drain_Before_The_Minimum_Interval_Does_Nothing_And_Keeps_The_Remainder()
@@ -311,13 +327,13 @@ public sealed class ViolationScoreContainerTests
     {
         ViolationScoreContainer container = new (new ControllableTimeProvider());
 
+        container.ChargeViolation(Source(41000), ViolationScoreContainer.TooShortViolationWeight);
+        container.ChargeViolation(Source(41001), ViolationScoreContainer.UnauthenticatedViolationWeight);
+        container.ChargeViolation(Source(41002), ViolationScoreContainer.RateLimitViolationWeight);
+        container.ChargeViolation(Source(41003), ViolationScoreContainer.DuplicateViolationWeight);
+
         using (Assert.Multiple())
         {
-            container.ChargeViolation(Source(41000), ViolationScoreContainer.TooShortViolationWeight);
-            container.ChargeViolation(Source(41001), ViolationScoreContainer.UnauthenticatedViolationWeight);
-            container.ChargeViolation(Source(41002), ViolationScoreContainer.RateLimitViolationWeight);
-            container.ChargeViolation(Source(41003), ViolationScoreContainer.DuplicateViolationWeight);
-
             await Assert.That(container.IsWithinAllowance(Source(41000))).IsTrue();
             await Assert.That(container.IsWithinAllowance(Source(41001))).IsTrue();
             await Assert.That(container.IsWithinAllowance(Source(41002))).IsTrue();
