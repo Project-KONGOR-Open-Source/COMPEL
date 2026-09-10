@@ -11,4 +11,13 @@ public static class HeroesOfNewerthExecutable
           OperatingSystem.IsWindows() ? "hon_x64.exe"
         : OperatingSystem.IsLinux()   ? "hon-x86_64-server"
         : throw new PlatformNotSupportedException("COMPEL Hosts Match Servers On Windows And Linux Only");
+
+    /// <summary>
+    ///     Whether the manager, launched from <paramref name="directory"/>, can spawn server instances that receive the configuration it passes them.
+    ///     On Windows the manager spawns each instance with an unquoted executable path, which Heroes Of Newerth only parses correctly when that path contains a whitespace character.
+    ///     Without one, every instance loses the flags and the configuration payload the manager passes it, starts as a game client rather than a dedicated server, and never binds its game port.
+    ///     On Linux the manager quotes the path it spawns, so any directory works.
+    /// </summary>
+    public static bool CanLaunchInstancesFrom(string directory)
+        => OperatingSystem.IsWindows() is false || Path.Combine(directory, FileName).Any(char.IsWhiteSpace);
 }
