@@ -1093,7 +1093,6 @@ Advertise them instead of the maxima, replacing the two `ChallengeMaximumCounter
 Give `ClientSession` its challenge state, which delegates to the type from Task 4:
 
 ```csharp
-```csharp
         // Rotation And Matching Live In "SessionChallengeState" So The Renewal Grace Is Testable Outside This Private Class
         public SessionChallengeState Challenges { get; } = new ();
 ```
