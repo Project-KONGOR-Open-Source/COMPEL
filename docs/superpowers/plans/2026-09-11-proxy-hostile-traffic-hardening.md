@@ -54,12 +54,12 @@ This is routine, not exotic: the client used eight source ports in one short run
 
 **What the reference does.** `responses` is keyed on the challenge **value** globally, with a per-address inner map (`main.cpp:189`, looked up at `:692`). A datagram whose challenge is known but whose address is new hits the inner miss at `main.cpp:786-789`, which *creates* a counter array and admits the datagram. That is why the reference has no equivalent bug.
 
-- [ ] **Step 1: Fact verification.** Read `main.cpp:189`, `:692`, `:786-789` and `:1217-1245` for the retention and eviction shape. Read `c_enhanced_watermark.cpp` around the `challenges[ip_cstr]` assignment to confirm the client's key is the destination. Confirm `KEEP_CHALLENGES` is 6 and that a challenge's whole inner map is erased when the value is evicted.
-- [ ] **Step 2: Write the failing test — this is the test that was missing.** Two sessions on one forwarder, a rotation, then the *first* session echoing the challenge issued to the *second*. It must be admitted. Assert it against the forwarder, not a unit, because that is where the two sessions exist. Prove it fails today.
-- [ ] **Step 3: Move the retained challenges and the sequence to `UDPForwarder`.** One sequence and one bounded history of `RetainedChallengeCount` values per forwarder. Keep a per-`(challenge, endpoint)` seen set so two clients under one challenge have independent counters. Evicting a challenge drops its whole set, as the reference does.
-- [ ] **Step 4: Keep the per-session grace.** It still covers a client echoing a challenge from a *previous COMPEL run*, which live testing showed costs exactly one datagram and resolves in milliseconds. Do not remove it.
-- [ ] **Step 5: Re-verify live.** A real match, then a second client or a forced source-port change on the same public port, with `proxyDroppedDatagramCount` staying at zero.
-- [ ] **Step 6: Commit.**
+- [x] **Step 1: Fact verification.** Read `main.cpp:189`, `:692`, `:786-789` and `:1217-1245` for the retention and eviction shape. Read `c_enhanced_watermark.cpp` around the `challenges[ip_cstr]` assignment to confirm the client's key is the destination. Confirm `KEEP_CHALLENGES` is 6 and that a challenge's whole inner map is erased when the value is evicted.
+- [x] **Step 2: Write the failing test — this is the test that was missing.** Two sessions on one forwarder, a rotation, then the *first* session echoing the challenge issued to the *second*. It must be admitted. Assert it against the forwarder, not a unit, because that is where the two sessions exist. Prove it fails today.
+- [x] **Step 3: Move the retained challenges and the sequence to `UDPForwarder`.** One sequence and one bounded history of `RetainedChallengeCount` values per forwarder. Keep a per-`(challenge, endpoint)` seen set so two clients under one challenge have independent counters. Evicting a challenge drops its whole set, as the reference does.
+- [x] **Step 4: Keep the per-session grace.** It still covers a client echoing a challenge from a *previous COMPEL run*, which live testing showed costs exactly one datagram and resolves in milliseconds. Do not remove it.
+- [x] **Step 5: Re-verify live.** A real match, then a second client or a forced source-port change on the same public port, with `proxyDroppedDatagramCount` staying at zero.
+- [x] **Step 6: Commit.** (`c3f0244`)
 
 ## Task 2: Make The Challenge Value Unpredictable
 
@@ -69,10 +69,10 @@ This is routine, not exotic: the client used eight source ports in one short run
 
 **Why it is now cheap.** The value and the server-creation timestamp used to share one field. That coupling was removed, so this is self-contained.
 
-- [ ] **Step 1: Fact verification.** Confirm the CSPRNG draw and the retry-against-retained-list at the cited lines.
-- [ ] **Step 2: Write the failing tests.** Two successive challenges are not consecutive; a value is never zero, because zero marks an unauthenticated client; a value still retained is never reissued.
-- [ ] **Step 3: Implement** with `RandomNumberGenerator`, honouring the no-reissue precondition already documented on the rotation path. A monotonic counter satisfied that for free; a random one does not.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Fact verification.** Confirm the CSPRNG draw and the retry-against-retained-list at the cited lines.
+- [x] **Step 2: Write the failing tests.** Two successive challenges are not consecutive; a value is never zero, because zero marks an unauthenticated client; a value still retained is never reissued.
+- [x] **Step 3: Implement** with `RandomNumberGenerator`, honouring the no-reissue precondition already documented on the rotation path. A monotonic counter satisfied that for free; a random one does not.
+- [x] **Step 4: Commit.** (`79b31c1`)
 
 ---
 
@@ -168,14 +168,14 @@ Recorded with reasons so they are not rediscovered and re-argued.
 
 # Final Verification
 
-- [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
-- [ ] `dotnet test source/COMPEL.slnx` passes, and every new test was proven to fail against the pre-fix code with the figures recorded.
-- [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings, run per the note in Global Constraints.
-- [ ] **A real match through the proxy** shows `Disconnects(0)` and `proxyDroppedDatagramCount` of zero. Read it from `/status` with an `AuthenticationToken` set in `COMPEL.json` — without one the control plane refuses every request.
-- [ ] **Two sessions on one public port** — a second client, or a forced source-port change mid-match — with the drop count staying at zero. This is the condition the merge blocker needed, and no earlier verification exercised it.
-- [ ] **A COMPEL restart, then rejoining a match.** Note that a restart *necessarily ends any match in progress*: `MatchServerManagerSupervisor` kills orphaned manager processes at startup and before every launch, because spawned servers can be reparented and escape `Kill(entireProcessTree)`. The check is that a client can rejoin cleanly on a public port it used before, not that it plays through the restart.
-- [ ] A synthetic flood from many spoofed source endpoints does not exhaust sockets and does not refuse the players already in a match.
-- [ ] Forty datagrams spoofed as a player in a live match do not interrupt that player.
+- [x] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
+- [x] `dotnet test source/COMPEL.slnx` passes, and every new test was proven to fail against the pre-fix code with the figures recorded.
+- [x] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings, run per the note in Global Constraints.
+- [x] **A real match through the proxy** shows `Disconnects(0)` and `proxyDroppedDatagramCount` of zero. Read it from `/status` with an `AuthenticationToken` set in `COMPEL.json` — without one the control plane refuses every request.
+- [x] **Two sessions on one public port** — a second client, or a forced source-port change mid-match — with the drop count staying at zero. This is the condition the merge blocker needed, and no earlier verification exercised it.
+- [x] **A COMPEL restart, then rejoining a match.** Note that a restart *necessarily ends any match in progress*: `MatchServerManagerSupervisor` kills orphaned manager processes at startup and before every launch, because spawned servers can be reparented and escape `Kill(entireProcessTree)`. The check is that a client can rejoin cleanly on a public port it used before, not that it plays through the restart.
+- [x] A synthetic flood from many spoofed source endpoints does not exhaust sockets and does not refuse the players already in a match.
+- [x] Forty datagrams spoofed as a player in a live match do not interrupt that player.
 
 ## Notes from the live verification that produced this list
 
