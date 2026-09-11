@@ -4,6 +4,39 @@ Companion to `2026-09-10-proxy-abuse-protection-design.md`. Everything here was 
 
 Nothing here blocks the abuse protection from being an improvement on the transparent relay it replaced. Item 1 is the only one that is worse than that baseline, and it is the one to read first.
 
+## What to do, in what order
+
+Effort is given in **tasks**, where a task is one focused change with its own tests and its own review — roughly what fits comfortably in one sitting. Nothing here is required before the feature ships.
+
+**Before this is deliberately exposed to hostile traffic** — the proxy is reachable from the internet, so this is the group that matters if anyone attacks it rather than merely plays against it.
+
+| | Item | Effort | Notes |
+| --- | --- | --- | --- |
+| 2 | Session and connection caps | **1–2 tasks** | Mostly a policy decision: what the caps should be given a configurable instance count. The code is a check before `GetOrCreateSession` plus per-IP counting. |
+| 1 | Spoofed source silences a player | **1 session** | Half of it is deciding *which* mitigation; the implementation after that is small. Do not start it as an implementation task. |
+| 8 | Under-attack indicator is stale | **1 task** | Only worth doing as part of item 2, since gating admission on it is the only use that needs it live. |
+
+**To make future work in this area safe** — none of it changes behaviour, all of it changes how much you can trust the next change.
+
+| | Item | Effort | Notes |
+| --- | --- | --- | --- |
+| 10 | Extract the pipeline out of `UDPForwarder.Run` | **1–2 tasks** | Highest leverage item in this document. Several defects on this branch were only reachable through a live loopback socket because the pipeline is inline; extracting it makes them unit-testable. |
+| 4 | Inject a `TimeProvider` into the forwarder | **1 task** | Mechanical. Now worth more than when it was written: the branch has since added a second, also-untested idle timeout. |
+
+**Cheap and worth doing whenever.**
+
+| | Item | Effort | Notes |
+| --- | --- | --- | --- |
+| 5 | Make the challenge value random | **Half a task** | The blocker was removed during this work. Needs the uniqueness check the `Rotate` precondition already documents. |
+| 9 | Parallelise the maintenance loop | **1 task** | Only bites under item 2's uncapped condition. Do it after, or not at all. |
+
+**Large, and genuinely optional.**
+
+| | Item | Effort | Notes |
+| --- | --- | --- | --- |
+| 6, 7 | Watermark, packet-type and netcmd validation | **Several sessions** | The reference's highest-value anti-cheat signal and the highest false-positive risk in the whole area. Needs `game_data_protocol.h` ported and a region setting COMPEL has no equivalent for. Treat as its own project with its own spec. |
+| 3 | Per-forwarder challenge retention | **1–2 tasks** | Now optional rather than needed: the per-session grace covers the case it would fix. Only worth it as groundwork for item 5 being meaningful. |
+
 ---
 
 ## 1. A spoofed source can silence a named player
