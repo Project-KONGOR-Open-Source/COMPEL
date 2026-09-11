@@ -104,18 +104,16 @@ internal sealed class UDPForwarder : IDisposable
 
             IPEndPoint client = (IPEndPoint)result.RemoteEndPoint;
 
-            ClientSession session;
-            bool created;
+            SessionAdmissionResult admissionResult = TryGetOrCreateSession(client, stoppingToken, out ClientSession? session, out bool created);
 
-            try { session = GetOrCreateSession(client, stoppingToken, out created); }
-            catch (Exception exception)
+            if (admissionResult is not SessionAdmissionResult.Admitted || session is null)
             {
                 // Counted, Charged And Throttled Like Any Other Refusal. Unthrottled And Unscored, This Path Disabled The Abuse Protection For New Sources At Exactly The Moment The Proxy Was Being Exhausted, And Logged Once Per Datagram
                 // Only The Arrival Is Charged And No Violation Weight, Because A Session Can Fail To Open For Reasons That Are Not The Client's Fault
                 scoreContainer.ChargeArrival(client);
 
                 if (Drop(client, "Session Creation Failed"))
-                    logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client);
+                    logger.LogDebug("Failed To Create Proxy Session For {Client} ({Reason})", client, admissionResult);
 
                 continue;
             }
@@ -295,32 +293,49 @@ internal sealed class UDPForwarder : IDisposable
             Interlocked.Decrement(ref reportedDropCount);
     }
 
-    private ClientSession GetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out bool created)
+    private enum SessionAdmissionResult
     {
-        if (sessions.TryGetValue(client, out ClientSession? existing))
+        Admitted,
+        UnderAttack,
+        ForwarderCapReached,
+        AddressCapReached,
+        CreationFailed
+    }
+
+    private SessionAdmissionResult TryGetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out ClientSession? session, out bool created)
+    {
+        if (sessions.TryGetValue(client, out session))
         {
             created = false;
 
-            return existing;
+            return SessionAdmissionResult.Admitted;
         }
 
         lock (sessionsLock)
         {
-            if (sessions.TryGetValue(client, out existing))
+            if (sessions.TryGetValue(client, out session))
             {
                 created = false;
 
-                return existing;
+                return SessionAdmissionResult.Admitted;
             }
 
             if (attackIndicator.IsUnderAttack)
-                throw new InvalidOperationException("Session creation refused because the proxy is under attack");
+            {
+                session = null;
+                created = false;
+
+                return SessionAdmissionResult.UnderAttack;
+            }
 
             if (sessions.Count >= MaxSessionsPerForwarder)
             {
                 attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
 
-                throw new InvalidOperationException($"Maximum sessions per forwarder limit reached ({MaxSessionsPerForwarder})");
+                session = null;
+                created = false;
+
+                return SessionAdmissionResult.ForwarderCapReached;
             }
 
             int sessionCountForAddress = 0;
@@ -334,23 +349,39 @@ internal sealed class UDPForwarder : IDisposable
             {
                 attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
 
-                throw new InvalidOperationException($"Maximum sessions per address limit reached ({MaxSessionsPerAddress}) for {client.Address}");
+                session = null;
+                created = false;
+
+                return SessionAdmissionResult.AddressCapReached;
+            }
+
+            Socket upstreamSocket;
+            try
+            {
+                upstreamSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                DisableConnectionResetReporting(upstreamSocket);
+                upstreamSocket.Connect(serverEndPoint);
+            }
+            catch (Exception exception)
+            {
+                logger.LogDebug(exception, "Failed To Open Upstream Proxy Socket For {Client}", client);
+
+                session = null;
+                created = false;
+
+                return SessionAdmissionResult.CreationFailed;
             }
 
             attackIndicator.Charge(AttackIndicatorContainer.NovelEndpointAttackWeight);
 
-            Socket upstreamSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            DisableConnectionResetReporting(upstreamSocket);
-            upstreamSocket.Connect(serverEndPoint);
-
-            ClientSession session = new (upstreamSocket, stoppingToken, timeProvider);
+            session = new (upstreamSocket, stoppingToken, timeProvider);
             sessions[client] = session;
 
             _ = PumpServerToClient(client, session);
 
             created = true;
 
-            return session;
+            return SessionAdmissionResult.Admitted;
         }
     }
 
