@@ -22,6 +22,12 @@ internal sealed class UDPForwarder : IDisposable
     // No Reference "#define" To Cite: The Reference Bounds Its Own Maps With A Bare Literal Of A Thousand. Reporting Stops At The Bound Rather Than Clearing, Because Clearing Would Un-Throttle Every Source Already Reported And Turn A Flood Into A Log Flood
     private const int ReportedDropLimit = 1000;
 
+    // MAX_GAME_CONNECTIONS / MAX_VOICE_CONNECTIONS
+    private const int MaxSessionsPerForwarder = 24;
+
+    // MAX_GAME_CONNECTIONS_PER_IP / MAX_VOICE_CONNECTIONS_PER_IP
+    private const int MaxSessionsPerAddress = 10;
+
     // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
     // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
     internal static readonly TimeSpan UnknownChallengeGrace = TimeSpan.FromSeconds(30);
@@ -330,6 +336,19 @@ internal sealed class UDPForwarder : IDisposable
 
                 return existing;
             }
+
+            if (sessions.Count >= MaxSessionsPerForwarder)
+                throw new InvalidOperationException($"Maximum sessions per forwarder limit reached ({MaxSessionsPerForwarder})");
+
+            int sessionCountForAddress = 0;
+            foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+            {
+                if (pair.Key.Address.Equals(client.Address))
+                    sessionCountForAddress++;
+            }
+
+            if (sessionCountForAddress >= MaxSessionsPerAddress)
+                throw new InvalidOperationException($"Maximum sessions per address limit reached ({MaxSessionsPerAddress}) for {client.Address}");
 
             Socket upstreamSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             DisableConnectionResetReporting(upstreamSocket);
