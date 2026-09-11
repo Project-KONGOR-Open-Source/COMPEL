@@ -519,6 +519,36 @@ public sealed class UDPForwarderTests
         await Assert.That(await TryReceive(probe.Client)).IsNull();
     }
 
+    // Two sessions on one forwarder share the destination public port.
+    // When challenges rotate, each session is sent the forwarder's latest retained challenge.
+    // A client storing challenges by destination port accepts the last challenge received for that destination port, so any session on that port echoing that challenge must be admitted.
+    [Test]
+    public async Task A_Rotated_Challenge_Issued_To_One_Session_Is_Admitted_When_Echoed_By_Another_Session_On_The_Same_Forwarder()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint session1FirstChallenge = await probe.Establish();
+        await Assert.That(await probe.Relays(GameDatagram(session1FirstChallenge, counter: 0))).IsTrue();
+
+        using Socket client2 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        client2.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+        IPEndPoint publicEndPoint = new (IPAddress.Loopback, probe.Forwarder.PublicPort);
+        await client2.SendToAsync(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0), SocketFlags.None, publicEndPoint);
+
+        await DrainUntilIdle(probe.Client);
+        await DrainUntilIdle(client2);
+        await DrainUntilIdle(probe.Server);
+
+        probe.Forwarder.RotateChallenges();
+
+        uint challenge2 = await ReadOneChallengeValue(probe.Forwarder, client2);
+
+        // Session 1 echoes challenge2 (which was issued during rotation to Session 2).
+        // Since both sessions share the forwarder, this challenge must be recognized as retained by the forwarder.
+        await Assert.That(await probe.Relays(GameDatagram(challenge2, counter: 10))).IsTrue();
+    }
+
     private static bool IsChallenge(byte[] datagram)
         => datagram.Length >= 58 && datagram[40] is 0xFF && datagram[41] is 0xFF && (datagram[42] & 0x40) is not 0 && datagram[43] is 0x00;
 
@@ -638,6 +668,8 @@ public sealed class UDPForwarderTests
         internal UDPForwarder Forwarder { get; }
 
         internal ViolationScoreContainer Scores { get; }
+
+        internal Socket Server => server;
 
         internal Socket Client => client;
 
