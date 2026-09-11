@@ -61,6 +61,26 @@ internal sealed class SessionChallengeState
     }
 
     /// <summary>
+    ///     Reports whether <paramref name="challenge"/> is <see cref="UnauthenticatedChallenge"/> or is currently retained by this forwarder.
+    /// </summary>
+    internal bool ContainsChallenge(uint challenge)
+    {
+        if (challenge is UnauthenticatedChallenge)
+            return true;
+
+        lock (stateLock)
+        {
+            foreach (RetainedChallenge item in retained)
+            {
+                if (item.Challenge == challenge)
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
     ///     The window for the challenge the client echoed, or <see langword="null"/> when it echoed a non-zero challenge this forwarder never issued or no longer retains.
     /// </summary>
     internal ChallengeWindow? Match(uint challenge, IPEndPoint? endpoint = null)

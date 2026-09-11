@@ -96,7 +96,7 @@ public sealed class UDPForwarderTests
     }
 
     [Test]
-    public async Task Each_Challenge_Renewal_Carries_A_Strictly_Greater_Value()
+    public async Task Successive_Challenges_Are_Not_Consecutive()
     {
         int publicPort = FreeUDPPort();
         int localPort = FreeUDPPort();
@@ -128,7 +128,8 @@ public sealed class UDPForwarderTests
             using (Assert.Multiple())
             {
                 await Assert.That(firstValue).IsNotEqualTo((uint)0);
-                await Assert.That(secondValue > firstValue).IsTrue();
+                await Assert.That(secondValue).IsNotEqualTo((uint)0);
+                await Assert.That(secondValue).IsNotEqualTo(firstValue + 1);
             }
         }
 
