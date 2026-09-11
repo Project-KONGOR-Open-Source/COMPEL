@@ -1,115 +1,165 @@
-# Proxy Hostile-Traffic Hardening Implementation Plan
+# Proxy Follow-Up Work Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement the tasks in Part 1 and Part 2 task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the two ways a hostile source can cheaply harm COMPEL's proxy or a named player, neither of which the abuse-protection work addressed.
+**Goal:** Everything outstanding on COMPEL's managed UDP proxy after the abuse-protection work, triaged into what must be done, what is worth doing, and what is deliberately not being done.
 
-**Architecture:** Three of the four tasks are small and self-contained — a cap before session creation, a live under-attack indicator, and an unpredictable challenge value. The fourth changes what the violation score is allowed to *decide*, and needs its design confirmed before implementation rather than treated as settled.
+**Spec:** `docs/superpowers/specs/2026-09-10-proxy-abuse-protection-design.md` is the design the shipped work argues from. `docs/superpowers/specs/2026-09-11-proxy-abuse-protection-follow-up.md` holds the long-form reasoning for each item below and the evidence behind it; this document is the actionable list.
 
 **Tech Stack:** .NET 11, ASP.NET Core with Native AOT, TUnit on the Microsoft Testing Platform.
 
-**Spec:** `docs/superpowers/specs/2026-09-10-proxy-abuse-protection-design.md`, with the deferred items and their reasoning in `docs/superpowers/specs/2026-09-11-proxy-abuse-protection-follow-up.md` (items 1, 2, 5 and 8 are what this plan implements).
+## How to use this document
 
-**Why these four and not the other six.** The deferred document lists ten items. These four are the ones where *doing nothing* leaves a hole a hostile source can walk through today. The rest are either testability and maintainability work recorded as code TODOs, deliberately skipped with a reason, or a project of their own (watermark validation).
+It is written to be picked up cold across several sessions. Work top to bottom: Part 1 blocks the merge, Part 2 blocks exposure to hostile traffic, Part 3 is worth doing whenever, Part 4 is closed.
+
+**Each task states intent, the verified facts behind it, and acceptance criteria — deliberately not finished code.** That is a lesson from the work that produced this list: eleven defects were traced to plan text that pre-wrote code, which then went stale or contradicted what the surrounding code already asserted. Write the code in the session that runs the task, against the reference read fresh.
 
 ## Global Constraints
 
-- Reference implementation: `source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp`. The HON client is at `C:/Users/SADS-810/Source/HON/src/k2/c_enhanced_watermark.cpp` — read it for anything about what a client will accept, and do not trust any document's quotation of either.
-- **Every task starts by re-reading its cited reference lines.** Five reviews of the previous work each corrected a documented claim about the reference. Assume this document is wrong about it until checked.
-- The datagram pipeline's ordering is a security property: charge the arrival, refuse an actioned source, length-guard, read the fields, match the challenge, refuse an unmatched one, admit the counter once, relay. Task 4 deliberately changes what "refuse an actioned source" means; nothing else reorders it.
+- Reference implementation: `source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp`. The HON client is at `C:/Users/SADS-810/Source/HON/src/k2/c_enhanced_watermark.cpp` and `c_hostclient.cpp`.
+- **Re-read every cited reference line before using it.** Six reviews of the previous work each corrected a documented claim about the reference or the client. Assume this document is wrong until checked.
+- **The client is part of the system.** The defect that blocked the merge was invisible until someone read how the client stores challenges. When a task concerns the challenge protocol, read the client, not only the proxy.
+- The datagram pipeline's ordering is a security property: charge the arrival, refuse an actioned source, length-guard, read the fields, match the challenge, refuse an unmatched one, admit the counter once, relay.
 - The datagram path must not await and must not allocate per datagram.
-- Never use `var`; explicit type names throughout.
-- Acronyms and initialisms upper-case in PascalCase (`IPEndPoint`, `UDPForwarder`), in camelCase only when not leading.
-- Full words, never abbreviations. British English. Four spaces. Comments in StartCase; XML summaries in sentence case with a full stop per sentence and no sentence split across lines. Symbol references in double quotation marks or a parameterless `<see cref="..."/>`. Never the null-forgiving operator.
-- A constant ported from the reference carries its `#define` name in a trailing comment.
+- Never `var`; explicit types. Acronyms upper-case in PascalCase (`IPEndPoint`, `UDPForwarder`), camelCase only when not leading. Full words, never abbreviations. British English. Four spaces. Comments in StartCase; XML summaries in sentence case with a full stop per sentence and no sentence split across lines. Symbol references in double quotation marks or a parameterless `<see cref="..."/>`. Never the null-forgiving operator. A constant ported from the reference carries its `#define` name in a trailing comment.
 - `dotnet build source/COMPEL.slnx` reports 0 warnings after every task.
-- **A test must fail against the pre-fix code.** Prove it by stashing the production change and running the test, and record the figures. Three tests on the previous branch appeared to pin an invariant and did not.
+- **Prove every new test fails against the pre-fix code**, by stashing the production change and running it, and record the figures. Three tests in the previous work appeared to pin an invariant and did not.
+- **Native AOT publish:** run `scripts/Publish-Native-AOT-Release.ps1` with `pwsh`, redirect to a file, and read the script's own exit code before filtering. `powershell` on this machine is 5.1 and the script requires 7; a piped `grep` will hide that it refused to run.
 
 ---
 
-### Task 1: Cap Sessions Per Forwarder And Per Source Address
+# Part 1 — Must have, blocks the merge
 
-**Files:**
-- Modify: `source/COMPEL/Services/Proxy/UDPForwarder.cs`
-- Test: `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
+## Task 1: Hold Retained Challenges Per Forwarder, Not Per Session
 
-**The hole.** `GetOrCreateSession` runs before the length guard and before the allowance check, so one datagram from any novel source endpoint buys a UDP socket, a pump task with a 65,535-byte buffer, a linked `CancellationTokenSource`, a `SessionChallengeState`, and a challenge datagram to whatever address it named — with no cap on how many such sessions exist. A spoofed-source flood exhausts sockets and file descriptors, and the abuse score cannot help, because it is keyed on the endpoint and every spoofed endpoint is new.
+**This is the merge blocker. It was found by live testing against a real client, after five code reviews and 139 passing tests missed it.**
 
-The reference caps this at `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP` 10 (`main.cpp:53-56`), enforced before a connection is admitted (`:1718`, `:1739`).
+**The defect.** COMPEL keys retained challenges per `ClientSession`. The client keys the challenge it holds per **destination** — `challenges[ip_cstr]` in `c_enhanced_watermark.cpp`, where the key is the server's address and port. So whenever two sessions share one public port, each rotation issues a *different* challenge to each session, the client stores only whichever arrived last for that destination, and every other session on that port is then echoing a value it does not retain.
 
-**The decision this task needs first.** COMPEL runs one forwarder per instance per kind, and the instance count is configurable. Twenty-four per forwarder matches the reference and a full HoN match (ten players plus spectators), but confirm against `MatchServerManagerOptions` whether a larger figure is wanted for a busy host, and whether the per-address cap should be ten as the reference has it. Write the chosen figures into the constants with the reference names beside them.
+**The evidence**, from an instrumented run against a live match on public port 21236:
 
-- [ ] **Step 1: Fact verification.** Confirm `MAX_GAME_CONNECTIONS`, `MAX_VOICE_CONNECTIONS`, `MAX_GAME_CONNECTIONS_PER_IP` and `MAX_VOICE_CONNECTIONS_PER_IP`, and read the two enforcement sites to confirm both are checked *before* the socket is created.
-- [ ] **Step 2: Write the failing tests.** A forwarder at its session cap refuses a novel endpoint without creating a session; a source address at its per-address cap is refused while a different address is admitted; and a session freed by eviction releases its slot so the cap is not a permanent ceiling.
-- [ ] **Step 3: See them fail.**
-- [ ] **Step 4: Implement.** Check both caps in `GetOrCreateSession` before constructing anything, and return without a session. Count live sessions per `IPAddress` in a `ConcurrentDictionary<IPAddress, int>` maintained alongside `sessions`, decremented wherever a session dies — the same three sites `ReleaseDropReport` is called from. A refused datagram takes the unweighted `Drop` so it is counted and throttled but not scored: being the twenty-fifth player is not the client's fault.
-- [ ] **Step 5: See them pass, and commit.**
+```
+DIAG ISSUE  127.0.0.1:60099  Challenge 56  Timestamp 1789118118
+DIAG ISSUE  127.0.0.1:60097  Challenge 57  Timestamp 1789118118
 
----
+DIAG UNMATCHED 127.0.0.1:60097  Echoed 56  Counter 85..392  Retained [57,54,50,47]  Grace False
+```
 
-### Task 2: Make The Under-Attack Indicator Live
+`Grace False` — the session had already authenticated, so the unknown-challenge grace does not apply and each datagram is charged `ChallengeViolationWeight`. The source is actioned within about forty datagrams and blackholed for the rest of the match. The run reached 3306 dropped datagrams in 441 seconds with `proxyIsUnderAttack` true.
 
-**Files:**
-- Modify: `source/COMPEL/Services/Proxy/UDPProxyService.cs`, `source/COMPEL/Services/Proxy/UDPForwarder.cs`
-- Test: `source/COMPEL.Tests/Services/Proxy/UDPProxyServiceTests.cs`
+This is routine, not exotic: the client used eight source ports in one short run, several live on the same public port at once.
 
-**Why it has to change before it can be used.** `IsUnderAttack` is recomputed only when a five-minute window closes, so a flood is invisible for up to five minutes and the flag stays set for up to five minutes after one ends. Task 1's cap is a fixed ceiling; the reference additionally refuses *all* new connections while its indicator is over threshold (`main.cpp:1041`), which is what lets it survive a flood that stays under the per-address cap by spreading across addresses. Gating admission on the current indicator would refuse every new player for five minutes after an attack ended.
+**Why the existing grace does not cover it.** The grace applies only before a session has authenticated. This collision happens after.
 
-- [ ] **Step 1: Fact verification.** Read every `under_attack_indicator` site and confirm it is weighted (+1 per unknown-address datagram, +100 per blocked connection, +10000 on ban-table saturation) and read per datagram rather than per window.
-- [ ] **Step 2: Write the failing tests.** The indicator rises within one maintenance pass of a burst rather than one window; it falls again once the burst stops; and a refused-by-cap datagram contributes more than an ordinary refusal.
-- [ ] **Step 3: See them fail.**
-- [ ] **Step 4: Implement.** Replace the window-delta computation with a decaying weighted counter updated on the drop path, using the same elapsed-proportional drain `ViolationScoreContainer` uses so the mechanism is already familiar and already tested. Keep `UnderAttackThreshold` at the reference's 1000 and weight the events as the reference does.
-- [ ] **Step 5: Gate admission.** Refuse a novel endpoint while the indicator is over threshold, as the reference does. An existing session is unaffected, so a match in progress is never interrupted by this.
-- [ ] **Step 6: See them pass, and commit.**
+**What the reference does.** `responses` is keyed on the challenge **value** globally, with a per-address inner map (`main.cpp:189`, looked up at `:692`). A datagram whose challenge is known but whose address is new hits the inner miss at `main.cpp:786-789`, which *creates* a counter array and admits the datagram. That is why the reference has no equivalent bug.
 
----
+- [ ] **Step 1: Fact verification.** Read `main.cpp:189`, `:692`, `:786-789` and `:1217-1245` for the retention and eviction shape. Read `c_enhanced_watermark.cpp` around the `challenges[ip_cstr]` assignment to confirm the client's key is the destination. Confirm `KEEP_CHALLENGES` is 6 and that a challenge's whole inner map is erased when the value is evicted.
+- [ ] **Step 2: Write the failing test — this is the test that was missing.** Two sessions on one forwarder, a rotation, then the *first* session echoing the challenge issued to the *second*. It must be admitted. Assert it against the forwarder, not a unit, because that is where the two sessions exist. Prove it fails today.
+- [ ] **Step 3: Move the retained challenges and the sequence to `UDPForwarder`.** One sequence and one bounded history of `RetainedChallengeCount` values per forwarder. Keep a per-`(challenge, endpoint)` seen set so two clients under one challenge have independent counters. Evicting a challenge drops its whole set, as the reference does.
+- [ ] **Step 4: Keep the per-session grace.** It still covers a client echoing a challenge from a *previous COMPEL run*, which live testing showed costs exactly one datagram and resolves in milliseconds. Do not remove it.
+- [ ] **Step 5: Re-verify live.** A real match, then a second client or a forced source-port change on the same public port, with `proxyDroppedDatagramCount` staying at zero.
+- [ ] **Step 6: Commit.**
 
-### Task 3: Make The Challenge Value Unpredictable
+## Task 2: Make The Challenge Value Unpredictable
 
-**Files:**
-- Modify: `source/COMPEL/Services/Proxy/UDPForwarder.cs`
-- Test: `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
+**Do this immediately after Task 1, which is what makes it meaningful.** Once the challenge is shared per forwarder rather than per session, an unpredictable value actually protects something.
 
-**Why this is now cheap.** The challenge value was a monotonic counter because it doubled as the server-creation timestamp. That coupling was removed during the previous work, so this is a self-contained change — and it is worth doing because a per-forwarder counter issues *consecutive* values to co-located sessions, so a client holding value 17 can infer its co-players hold roughly `{11…20}`. That is what lets one player inject traffic into a match as another.
+**Why.** A per-forwarder monotonic counter issues *consecutive* values, so a client holding 17 can infer its co-players hold roughly `{11…20}` — enough to inject traffic into a match as another player. The reference draws from a CSPRNG and retries against its whole retained list (`main.cpp:1223`, `:1227`).
 
-- [ ] **Step 1: Fact verification.** Confirm the reference draws from a CSPRNG and retries against its whole retained list (`main.cpp:1223`, `:1227`), and confirm the precondition already documented on `SessionChallengeState.Rotate`: a value equal to one still retained must never be reissued, because it would build a fresh window and discard counters the client has already consumed.
-- [ ] **Step 2: Write the failing tests.** Two successive challenges are not consecutive; a value is never zero, because zero marks an unauthenticated client; and a value already retained by the session is not reissued.
-- [ ] **Step 3: See them fail.**
-- [ ] **Step 4: Implement.** Draw from `RandomNumberGenerator`, reject zero, and retry against the session's retained values. `SessionChallengeState` needs a way to ask whether it retains a value — add one rather than reaching into its list.
-- [ ] **Step 5: See them pass, and commit.**
+**Why it is now cheap.** The value and the server-creation timestamp used to share one field. That coupling was removed, so this is self-contained.
+
+- [ ] **Step 1: Fact verification.** Confirm the CSPRNG draw and the retry-against-retained-list at the cited lines.
+- [ ] **Step 2: Write the failing tests.** Two successive challenges are not consecutive; a value is never zero, because zero marks an unauthenticated client; a value still retained is never reissued.
+- [ ] **Step 3: Implement** with `RandomNumberGenerator`, honouring the no-reissue precondition already documented on the rotation path. A monotonic counter satisfied that for free; a random one does not.
+- [ ] **Step 4: Commit.**
 
 ---
 
-### Task 4: Stop A Spoofed Source Silencing A Player
+# Part 2 — Must have before the proxy is deliberately exposed to hostile traffic
 
-**This task needs its design confirmed before implementation. Do not start it as a transcription task.**
+The proxy is reachable from the internet. These do not block a merge but they do block treating it as hardened.
 
-**Files:**
-- Modify: `source/COMPEL/Services/Proxy/ViolationScoreContainer.cs`, `source/COMPEL/Services/Proxy/UDPForwarder.cs`
-- Test: `source/COMPEL.Tests/Services/Proxy/ViolationScoreContainerTests.cs`, `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
+## Task 3: Cap Sessions Per Forwarder And Per Source Address
 
-**The hole.** Scoring is keyed on `IPEndPoint` and UDP source addresses are forgeable. An unmatched challenge costs 100 against a threshold of 4000, so roughly **forty spoofed datagrams action a named player**, after which their own traffic is refused until the score drains. Repeating forty datagrams every few seconds sustains it at no measurable cost. This is the one thing in the abuse protection that is worse than the transparent relay it replaced, which had no score to drive.
+**The hole.** `GetOrCreateSession` runs before the length guard and before the allowance check, so one datagram from any novel source endpoint buys a UDP socket, a pump task with a 65,535-byte buffer, a `CancellationTokenSource`, a `SessionChallengeState`, and a challenge datagram to whatever address it named — with no cap. A spoofed-source flood exhausts sockets and file descriptors, and the abuse score cannot help because every spoofed endpoint is new.
 
-**Why the reference is no help.** It has the same exposure — `warns` is keyed on address and port too — and its response is worse: a firewall ban on the whole IP, which also removes anyone sharing it. COMPEL cannot copy its way out of this one.
+The reference caps at `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP` 10 (`main.cpp:53-56`), enforced before a connection is admitted (`:1718`, `:1739`).
 
-**The proposed design, to be confirmed.** Separate what the score *records* from what it is allowed to *decide*.
+**Decide the numbers first.** COMPEL runs one forwarder per instance per kind and the instance count is configurable. Twenty-four per forwarder matches the reference and a full match plus spectators; confirm against `MatchServerManagerOptions` whether a busy host wants more, and whether the per-address cap should be ten.
 
-Today one number both accumulates violations and gates the drop. The proposal is to action a source on its **sustained arrival rate** alone — the per-packet cost against the drain, which is already implemented and already tested — and let violation weights accumulate for logging, the under-attack indicator, and diagnosis without gating the drop. The consequence is that silencing a player requires actually sustaining more than `EstimatedPacketsPerSecond` spoofed as them, which costs the attacker real bandwidth and is no cheaper than attacking that player directly. The forty-packet asymmetry disappears.
+- [ ] **Step 1: Fact verification** of all four constants and both enforcement sites.
+- [ ] **Step 2: Write the failing tests.** A forwarder at its cap refuses a novel endpoint without creating a session; an address at its per-address cap is refused while a different address is admitted; a session freed by eviction releases its slot.
+- [ ] **Step 3: Implement.** Check both caps before constructing anything. Count live sessions per `IPAddress`, decremented wherever a session dies — the same three sites `ReleaseDropReport` is called from. A refused datagram takes the unweighted drop: being the twenty-fifth player is not the client's fault.
+- [ ] **Step 4: Commit.**
 
-What this gives up: an invalid-traffic source is no longer *actioned*, so each of its datagrams is validated and dropped individually rather than short-circuited at the allowance check. That is a small cost on the flood path, and the arrival-rate component still actions anything sending fast enough to matter.
+## Task 4: Make The Under-Attack Indicator Live
 
-**Alternatives considered, recorded so they are not rediscovered.** Capping what unmatched-challenge violations alone may contribute is simpler but arbitrary, and leaves a smaller version of the same asymmetry. Exempting a source whose current datagram validates would protect the victim perfectly but makes the actioned state gate nothing at all, since valid traffic would always relay. Doing nothing is defensible only if the proxy is never exposed to a hostile player, which is not the deployment.
+**Why it must precede any use of it.** `IsUnderAttack` is recomputed only when a five-minute window closes, so a flood is invisible for up to five minutes and the flag stays set for up to five minutes after one ends. Gating admission on it as it stands would refuse every new player for five minutes after an attack ended. The reference's indicator is live, weighted, and read per datagram to refuse new connections (`main.cpp:1041`).
 
-- [ ] **Step 1: Confirm the design** with the repository owner before writing code, presenting the proposal and the two alternatives. If it is rejected, stop and re-plan rather than implementing a compromise.
-- [ ] **Step 2 onwards:** to be written once the design is confirmed, following the usual write-the-failing-test-first cycle. The test that matters is the one that proves forty spoofed datagrams no longer refuse a victim's own valid traffic.
+- [ ] **Step 1: Fact verification.** Read every `under_attack_indicator` site and confirm the weights (+1 per unknown-address datagram, +100 per blocked connection, +10000 on ban-table saturation) and that it is read per datagram.
+- [ ] **Step 2: Write the failing tests.** The indicator rises within one maintenance pass of a burst rather than one window; falls once the burst stops; a refused-by-cap datagram weighs more than an ordinary refusal.
+- [ ] **Step 3: Implement** as a decaying weighted counter updated on the drop path, using the same elapsed-proportional drain `ViolationScoreContainer` already uses and tests.
+- [ ] **Step 4: Gate admission** on it, as the reference does. An existing session is unaffected, so a match in progress is never interrupted.
+- [ ] **Step 5: Commit.**
+
+## Task 5: Stop A Spoofed Source Silencing A Player
+
+**This task needs its design confirmed with the repository owner before any code. Do not start it as a transcription task.**
+
+**The hole.** Scoring is keyed on `IPEndPoint` and UDP source addresses are forgeable. An unmatched challenge costs 100 against a threshold of 4000, so roughly **forty spoofed datagrams action a named player**, after which their own traffic is refused until the score drains. Repeating forty datagrams every few seconds sustains it at no measurable cost. This is the one behaviour in the abuse protection that is worse than the transparent relay it replaced, which had no score to drive.
+
+**The reference is no help.** Its `warns` map is keyed on address and port too, and its response is worse — a firewall ban on the whole IP, which also removes anyone sharing it.
+
+**Proposed design, to be confirmed.** Separate what the score *records* from what it is allowed to *decide*: action a source on its sustained **arrival rate** alone — the per-packet cost against the drain, already implemented and tested — and let violation weights accumulate for logging, the under-attack indicator and diagnosis without gating the drop. Silencing a player then requires actually sustaining more than `EstimatedPacketsPerSecond` spoofed as them, which costs real bandwidth and is no cheaper than attacking them directly.
+
+**What that gives up:** an invalid-traffic source is no longer short-circuited at the allowance check, so each of its datagrams is validated and dropped individually. Small cost on the flood path.
+
+**Alternatives considered, recorded so they are not rediscovered.** Capping what unmatched-challenge violations alone may contribute is simpler but arbitrary and leaves a smaller version of the same asymmetry. Exempting a source whose current datagram validates protects the victim perfectly but makes the actioned state gate nothing, since valid traffic would always relay. Doing nothing is defensible only if the proxy is never exposed to a hostile player.
+
+- [ ] **Step 1: Confirm the design** with the repository owner, presenting the proposal and both alternatives. If rejected, re-plan rather than implementing a compromise.
+- [ ] **Step 2 onward:** written once the design is confirmed. The test that matters is that forty spoofed datagrams no longer refuse a victim's own valid traffic.
 
 ---
 
-## Final Verification
+# Part 3 — Nice to have
+
+Neither changes behaviour. Both change how much the next change can be trusted. Recorded as `TODO` comments at the code sites they concern.
+
+- [ ] **Extract the validation pipeline out of `UDPForwarder.Run`.** *1–2 tasks.* The highest-leverage item here. The pipeline is inline across roughly a hundred lines of the receive loop, so every branch is reachable only through a live socket — which is why several defects in it were found by reviewers reading code rather than by tests, and why the merge blocker needed a real client to surface. `UDPForwarder` is now around 460 lines mixing socket lifetime, the session table, challenge issuing, validation and drop accounting.
+- [ ] **Inject a `TimeProvider` into `UDPForwarder` and `ClientSession`.** *1 task, mechanical.* Their direct `Environment.TickCount64` and wall-clock reads mean the unknown-challenge grace's bound and **both** idle timeouts cannot be reached by a test without waiting out the real interval. Setting the grace bound to `long.MaxValue` leaves the whole suite green. `ViolationScoreContainer` already takes a `TimeProvider` and `ControllableTimeProvider` already exists in the test project, so the pattern is established.
+- [ ] **Model the client's challenge storage in a test double.** *1 task.* Nothing in the suite models the fact that the client keys challenges by destination and accepts a replacement only on a strictly greater timestamp. That is the gap the merge blocker fell through. A small test double implementing the client's acceptance rule would let the challenge protocol be tested end to end without a live match.
+
+---
+
+# Part 4 — Deliberately skipped
+
+Recorded with reasons so they are not rediscovered and re-argued.
+
+- **Parallelise the maintenance loop.** It is a single serial task issuing blocking sends for every session of every forwarder, so under an uncapped session table one attacked port can stall challenge rotation and the score drain for every other instance's players. Skipped because Task 3's caps remove the condition that makes it reachable. Revisit only if Task 3 is not done.
+- **Enforce the game-command quota.** It is advertised and the client self-limits to it, but nothing on the proxy side checks it, because the reference enforces it with a second per-challenge counter that only increments for order-carrying game-data packets (`main.cpp:764`). That needs the netcmd parsing in Part 5, so it rides with that.
+- **Reduce the challenge expiry from sixty seconds.** Sixty is three times the reference's twenty, which lengthens the window in which a client echoes something the proxy may not know. Task 1 removes the reason that matters, and the per-second repeat already makes delivery reliable.
+
+---
+
+# Part 5 — Its own project
+
+- **Watermark, packet-type and network-command validation.** *Several sessions.* Recorded as a `TODO` in `UDPProxyService`. The reference's constant per-region watermark and dynamic CRC32C watermark are its highest-value anti-cheat signal and the highest false-positive risk in this whole area; adding them needs `game_data_protocol.h` ported and a region setting COMPEL has no equivalent for. It deserves its own spec and its own brainstorming rather than being appended here. The `ClientPacketReader` minimum lengths of 43 and 41 are the reference's *floor*; it additionally requires 44, 47 or 48 by packet type (`main.cpp:576-580`), which belongs with this work.
+
+---
+
+# Final Verification
 
 - [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
 - [ ] `dotnet test source/COMPEL.slnx` passes, and every new test was proven to fail against the pre-fix code with the figures recorded.
-- [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings. Run it with `pwsh`, redirect to a file, and read the script's own exit code — `powershell` on this machine is 5.1 and the script requires 7, and a piped `grep` will hide that it refused to run at all.
-- [ ] A real match through the proxy shows `Disconnects(0)` and a drop count of zero.
-- [ ] A synthetic flood from many spoofed source endpoints does not exhaust sockets, and does not refuse the players already in a match.
+- [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings, run per the note in Global Constraints.
+- [ ] **A real match through the proxy** shows `Disconnects(0)` and `proxyDroppedDatagramCount` of zero. Read it from `/status` with an `AuthenticationToken` set in `COMPEL.json` — without one the control plane refuses every request.
+- [ ] **Two sessions on one public port** — a second client, or a forced source-port change mid-match — with the drop count staying at zero. This is the condition the merge blocker needed, and no earlier verification exercised it.
+- [ ] **A COMPEL restart, then rejoining a match.** Note that a restart *necessarily ends any match in progress*: `MatchServerManagerSupervisor` kills orphaned manager processes at startup and before every launch, because spawned servers can be reparented and escape `Kill(entireProcessTree)`. The check is that a client can rejoin cleanly on a public port it used before, not that it plays through the restart.
+- [ ] A synthetic flood from many spoofed source endpoints does not exhaust sockets and does not refuse the players already in a match.
 - [ ] Forty datagrams spoofed as a player in a live match do not interrupt that player.
+
+## Notes from the live verification that produced this list
+
+- The test install's `COMPEL.json` predated four settings the current build expects (`WarmInstancesTarget`, `CDNSynchronisation`, `AuthenticationToken`, `ControlPlanePort`). COMPEL applied defaults and started cleanly, which is the right behaviour, but a stale `RuntimeArtefactsPath` of `TEMP` was rejected outright — the validator names the setting and the file, which made it a five-second fix.
+- The manager's `console.log` fills with `No free ports found` at startup while the slaves are binding. All five slaves started and bound regardless, and the manager log showed `SLAVE_START` for all five followed by `SLAVE_INITIALIZED`. It appears to be a startup artefact rather than a fault, but it is noisy and was independently investigated earlier in this work, so it is worth confirming rather than assuming.
+- COMPEL must run from a path containing whitespace or instances silently start as clients and never bind their game port. The start-up guard enforces this; the publish directory `windows-x64-native-aot` does **not** satisfy it, so live testing needs an install directory whose name contains a space.

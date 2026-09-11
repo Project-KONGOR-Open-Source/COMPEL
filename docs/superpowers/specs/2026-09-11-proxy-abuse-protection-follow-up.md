@@ -6,15 +6,17 @@ Nothing here blocks the abuse protection from being an improvement on the transp
 
 ## Triage
 
-Every item below is in one of three containers. Nothing here blocks the feature shipping.
+Corrected after live verification. Every item is in one of four containers, and the actionable list is `docs/superpowers/plans/2026-09-11-proxy-hostile-traffic-hardening.md`.
 
-**MUST HAVE — items 1, 2, 5, 8.** These are the ones where doing nothing leaves a hole a hostile source can walk through today. They have their own plan: `docs/superpowers/plans/2026-09-11-proxy-hostile-traffic-hardening.md`. Item 5 rides with item 1 because it closes half of it and costs half a task; item 8 rides with item 2 because gating admission on the indicator is the only reason to make it live.
+**MUST HAVE, BLOCKING — item 3.** Live testing against a real client showed this is not the theoretical divergence it was first triaged as: because the client keys the challenge it holds by *destination* while COMPEL keys retained challenges by *session*, two sessions sharing one public port collide on every rotation and the loser is charged 100 a datagram and blackholed. Measured at 3306 dropped datagrams in 441 seconds with `proxyIsUnderAttack` true. **This item was originally triaged as SKIP on the reasoning that the per-session grace covered it. That reasoning was wrong — the grace applies only before a session authenticates and this collision happens after.** Item 5 is promoted with it, because a shared challenge is what makes an unpredictable value worth having.
 
-**NICE TO HAVE — items 4, 10.** Neither changes behaviour; both change how much the next change can be trusted. Recorded as `TODO` comments at the code sites they concern rather than only here, because that is where someone will be standing when it matters. Item 10 — extracting the pipeline out of `UDPForwarder.Run` — is the highest-leverage thing in this document: several defects on the original branch were reachable only through a live loopback socket because the pipeline is inline.
+**MUST HAVE, BEFORE HOSTILE EXPOSURE — items 1, 2, 8.** The proxy is internet-reachable. Item 2 (no session or connection cap) lets one datagram buy a socket and a task; item 1 (a spoofed source silencing a named player) is the one behaviour worse than the transparent relay this replaced; item 8 (the under-attack indicator's five-minute lag) has to be fixed before anything gates admission on it.
 
-**SKIP — items 3, 7, 9.** Declined with reasons, recorded so they are not rediscovered and re-argued. Item 3 (per-forwarder challenge retention) is covered in effect by the per-session grace, which works and is tested; replacing it would be churn. Item 9 (parallelising the maintenance loop) only bites under the uncapped-session condition that the must-have plan removes. Item 7 (enforcing the game-command quota) cannot be done without the netcmd parsing in item 6, so it rides with that TODO.
+**NICE TO HAVE — items 4, 10, plus one new.** Neither changes behaviour; both change how much the next change can be trusted, and both are `TODO` comments at the code sites they concern. Item 10 — extracting the pipeline out of `UDPForwarder.Run` — is the highest-leverage item here: the pipeline being inline is *why* the blocking defect needed a live client to surface. The new item is a test double modelling the client's challenge storage, which is the specific gap the blocker fell through.
 
-**A PROJECT OF ITS OWN — item 6.** Watermark, packet-type and netcmd validation stays a `TODO` in the code. It is the reference's highest-value anti-cheat signal and the highest false-positive risk in the whole area, needs `game_data_protocol.h` ported and a region setting COMPEL has no equivalent for, and deserves its own spec rather than being appended to this.
+**SKIP — items 7, 9, and the challenge expiry.** Declined with reasons in the plan. Item 9 only becomes reachable if the caps are not done; item 7 cannot be done without the netcmd parsing in item 6.
+
+**A PROJECT OF ITS OWN — item 6.** Watermark, packet-type and network-command validation stays a `TODO` in the code and deserves its own spec.
 
 ## Effort, for the record
 
@@ -95,7 +97,7 @@ The reference keys `responses` on the challenge value **globally**, with a per-a
 
 Task 9 worked around this with a grace: until a session has authenticated, and for at most thirty seconds, an unmatched challenge is refused without the violation weight. That stops the false positive but still drops about a second of the client's traffic on a rebind.
 
-**Why parked.** It re-keys three types (`ChallengeWindow`, `SessionChallengeState`, and the forwarder's use of both), and Task 9 was the merge blocker.
+**No longer parked — this is now the merge blocker.** Live testing showed the collision is routine rather than theoretical: the client used eight source ports in one short run, several live on the same public port, and every rotation issued a different challenge to each session while the client stored only the last one for that destination. The session holding the others was charged 100 a datagram and blackholed. See Task 1 of the plan for the evidence and the fix.
 
 **What fixing it takes.** Move the retained challenge values to `UDPForwarder`, keep a per-`(challenge, endpoint)` seen set, and evict a challenge's whole set when the challenge ages out — which is what the reference does. It makes the challenge value shared across sessions, which is what would make randomising it worthwhile. The per-session grace **stays** either way: it is working, it is tested, and replacing it with a re-keying refactor would be churn for its own sake. Treat global retention as an improvement layered on top, not as a reason to remove the grace.
 
