@@ -180,21 +180,21 @@
 - Consumes: `ClientChallengeStoreDouble`
 - Modifies: `ForwarderProbe`
 
-- [ ] **Step 1: Add `ClientChallengeStoreDouble` property to `ForwarderProbe`**
+- [x] **Step 1: Add `ClientChallengeStoreDouble` property to `ForwarderProbe`**
   Expose `internal ClientChallengeStoreDouble ClientChallenges { get; } = new ();` on `ForwarderProbe`.
   In `ForwarderProbe.TryReceiveChallenge()` or receive pump, pass received challenge packets to `ClientChallenges.TryProcessChallengePacket(publicEndPoint, buffer)`.
 
-- [ ] **Step 2: Add integration test verifying end-to-end challenge acceptance**
+- [x] **Step 2: Add integration test verifying end-to-end challenge acceptance**
   Add test `Rotated_And_Repeated_Challenges_Are_Accepted_By_Client_Challenge_Store`:
   Establish a session through probe, verify `ClientChallenges` accepted the challenge.
   Trigger `Forwarder.RotateChallenges()`, verify `ClientChallenges` processed the replacement challenge and updated the held challenge value.
   Trigger `Forwarder.RepeatChallenges()`, verify the repeat packet is processed without error.
 
-- [ ] **Step 3: Run test suite**
+- [x] **Step 3: Run test suite**
   Run: `dotnet test source/COMPEL.slnx`
   Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   ```bash
   git add source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs
   git commit -m "Integrate Client Challenge Store Double Into Forwarder Probe"
