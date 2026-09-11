@@ -48,16 +48,16 @@ public sealed class UDPProxyService : BackgroundService
     // Shared Across Every Forwarder So A Single Source's Score Is The Same Regardless Of Which Public Port It Sends To; Not "IDisposable" And So Never Disposed Alongside The Forwarders
     private readonly ViolationScoreContainer scoreContainer;
 
+    // Shared Across Every Forwarder So Attack Pressure On Any Public Port Activates The Under-Attack Protection Globally
+    private readonly AttackIndicatorContainer attackIndicator;
+
     // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
 
     private volatile bool running;
     private int failedForwarderCount;
     private long droppedDatagramCount;
-    private int maintenancePassesThisWindow;
     private int maintenancePassesSinceRotation;
-    private long droppedDatagramsAtWindowStart;
-    private bool isUnderAttack;
 
     public UDPProxyService(IOptions<MatchServerManagerOptions> options, PortPlan ports, ILogger<UDPProxyService> logger)
     {
@@ -66,6 +66,7 @@ public sealed class UDPProxyService : BackgroundService
         this.logger = logger;
 
         scoreContainer = new ViolationScoreContainer(timeProvider);
+        attackIndicator = new AttackIndicatorContainer(timeProvider);
     }
 
     public bool IsRunning => running;
@@ -86,9 +87,9 @@ public sealed class UDPProxyService : BackgroundService
     public long DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
 
     /// <summary>
-    ///     Whether the proxy refused more datagrams in the last completed window than the under-attack threshold allows.
+    ///     Whether the proxy is currently under attack based on the live decaying attack indicator.
     /// </summary>
-    public bool IsUnderAttack => Volatile.Read(ref isUnderAttack);
+    public bool IsUnderAttack => attackIndicator.IsUnderAttack;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -154,7 +155,7 @@ public sealed class UDPProxyService : BackgroundService
     {
         try
         {
-            forwarders.Add(new UDPForwarder(publicPort, localPort, kind, ChallengeRenewalInterval, scoreContainer, timeProvider, logger));
+            forwarders.Add(new UDPForwarder(publicPort, localPort, kind, ChallengeRenewalInterval, scoreContainer, attackIndicator, timeProvider, logger));
         }
 
         catch (Exception exception)
@@ -173,6 +174,7 @@ public sealed class UDPProxyService : BackgroundService
             catch (OperationCanceledException) { break; }
 
             scoreContainer.Drain();
+            attackIndicator.Drain();
 
             bool rotating = ++maintenancePassesSinceRotation >= MaintenancePassesPerRotation;
 
@@ -201,22 +203,8 @@ public sealed class UDPProxyService : BackgroundService
 
             Volatile.Write(ref droppedDatagramCount, droppedDatagrams);
 
-            if (++maintenancePassesThisWindow >= UnderAttackWindowPasses)
-            {
-                maintenancePassesThisWindow = 0;
-
-                // The Sum From This Pass Is Reused Rather Than Read Back Through The Property, Which Would Volatile-Read The Value Just Written From It
-                long droppedThisWindow = droppedDatagrams - droppedDatagramsAtWindowStart;
-
-                droppedDatagramsAtWindowStart = droppedDatagrams;
-
-                bool underAttack = droppedThisWindow > UnderAttackThreshold;
-
-                Volatile.Write(ref isUnderAttack, underAttack);
-
-                if (underAttack)
-                    logger.LogWarning("The Proxy Refused {DroppedDatagrams} Datagram(s) In The Last Window, Which Exceeds The Under-Attack Threshold Of {Threshold}", droppedThisWindow, UnderAttackThreshold);
-            }
+            if (attackIndicator.IsUnderAttack)
+                logger.LogWarning("The Proxy Is Currently Under Attack (Indicator Score: {Score})", attackIndicator.Score);
         }
     }
 }

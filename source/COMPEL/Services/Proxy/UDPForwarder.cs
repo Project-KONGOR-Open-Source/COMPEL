@@ -35,6 +35,7 @@ internal sealed class UDPForwarder : IDisposable
     private readonly IPEndPoint serverEndPoint;
     private readonly ProxyForwarderKind kind;
     private readonly ViolationScoreContainer scoreContainer;
+    private readonly AttackIndicatorContainer attackIndicator;
     private readonly TimeProvider timeProvider;
     private readonly ILogger logger;
     private readonly Socket frontSocket;
@@ -54,13 +55,14 @@ internal sealed class UDPForwarder : IDisposable
 
     public long DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
 
-    public UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, TimeProvider timeProvider, ILogger logger)
+    public UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, AttackIndicatorContainer attackIndicator, TimeProvider timeProvider, ILogger logger)
     {
         PublicPort = publicPort;
         LocalPort = localPort;
         serverEndPoint = new IPEndPoint(IPAddress.Loopback, localPort);
         this.kind = kind;
         this.scoreContainer = scoreContainer;
+        this.attackIndicator = attackIndicator;
         this.timeProvider = timeProvider;
         this.logger = logger;
 
@@ -291,6 +293,7 @@ internal sealed class UDPForwarder : IDisposable
     private void Drop(IPEndPoint client, int weight, string reason)
     {
         scoreContainer.ChargeViolation(client, weight);
+        attackIndicator.Charge(AttackIndicatorContainer.ValidationDropAttackWeight);
 
         Drop(client, reason);
     }
@@ -337,8 +340,15 @@ internal sealed class UDPForwarder : IDisposable
                 return existing;
             }
 
+            if (attackIndicator.IsUnderAttack)
+                throw new InvalidOperationException("Session creation refused because the proxy is under attack");
+
             if (sessions.Count >= MaxSessionsPerForwarder)
+            {
+                attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
+
                 throw new InvalidOperationException($"Maximum sessions per forwarder limit reached ({MaxSessionsPerForwarder})");
+            }
 
             int sessionCountForAddress = 0;
             foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
@@ -348,7 +358,13 @@ internal sealed class UDPForwarder : IDisposable
             }
 
             if (sessionCountForAddress >= MaxSessionsPerAddress)
+            {
+                attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
+
                 throw new InvalidOperationException($"Maximum sessions per address limit reached ({MaxSessionsPerAddress}) for {client.Address}");
+            }
+
+            attackIndicator.Charge(AttackIndicatorContainer.NovelEndpointAttackWeight);
 
             Socket upstreamSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             DisableConnectionResetReporting(upstreamSocket);
