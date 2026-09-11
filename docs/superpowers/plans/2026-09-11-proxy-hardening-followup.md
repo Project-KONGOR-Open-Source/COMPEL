@@ -132,10 +132,10 @@
 - Introduces: `internal enum SessionAdmissionResult { Admitted, UnderAttack, ForwarderCapReached, AddressCapReached, CreationFailed }`
 - Modifies: `TryGetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out ClientSession? session, out bool created)`
 
-- [ ] **Step 1: Introduce `SessionAdmissionResult` enum**
+- [x] **Step 1: Introduce `SessionAdmissionResult` enum**
   Define `SessionAdmissionResult` inside `UDPForwarder`.
 
-- [ ] **Step 2: Refactor `GetOrCreateSession` to `TryGetOrCreateSession`**
+- [x] **Step 2: Refactor `GetOrCreateSession` to `TryGetOrCreateSession`**
   Instead of throwing `InvalidOperationException`:
   - Return `SessionAdmissionResult.UnderAttack` if `attackIndicator.IsUnderAttack`.
   - Charge `CapRefusalAttackWeight` and return `SessionAdmissionResult.ForwarderCapReached` if `sessions.Count >= MaxSessionsPerForwarder`.
@@ -143,7 +143,7 @@
   - Catch any unexpected `SocketException` during socket creation and return `SessionAdmissionResult.CreationFailed`.
   - On success, charge `NovelEndpointAttackWeight`, start pump, set `created = true`, and return `SessionAdmissionResult.Admitted`.
 
-- [ ] **Step 3: Update `Run` receive loop**
+- [x] **Step 3: Update `Run` receive loop**
   Replace `try { session = GetOrCreateSession(...) } catch` with:
   ```csharp
   SessionAdmissionResult admissionResult = TryGetOrCreateSession(client, stoppingToken, out ClientSession? session, out bool created);
@@ -159,11 +159,11 @@
   }
   ```
 
-- [ ] **Step 4: Run test suite**
+- [x] **Step 4: Run test suite**
   Run: `dotnet test source/COMPEL.slnx`
   Expected: PASS (all cap refusal, attack refusal, and eviction tests pass with zero exception overhead).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add source/COMPEL/Services/Proxy/UDPForwarder.cs
   git commit -m "Eliminate Exception Allocation For Session Creation Rejection"
