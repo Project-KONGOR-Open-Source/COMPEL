@@ -2,11 +2,6 @@ namespace COMPEL.Services.Proxy;
 
 // TODO: The Proxy Validates Datagram Length, The Per-Challenge Packet Quota, And Duplicate Counters, And Scores Abuse Per Source; It Does Not Yet Validate The Watermarks
 // TODO: The Reference Proxy Also Checks A Constant Per-Region Watermark And A Dynamic CRC32C One, Which Together Are Its Anti-Cheat Signal; Adding Them Needs A Region Setting COMPEL Has No Equivalent For, And Carries A Higher False-Positive Cost Than The Checks Above
-// TODO: Challenge Values Are A Monotonic Counter Rather Than The Reference's Cryptographically Random One, So They Are Guessable; A Source That Guesses One Is Held To The Per-Challenge Quota Instead Of The Much Smaller Unauthenticated One, And Watermark Validation Would Depend On Them Being Unpredictable
-// TODO: The Challenge Value And The Creation Timestamp No Longer Share One Value In "BuildChallengePacket", So Making The Challenge Cryptographically Random Is Now A Self-Contained Change Rather Than One That Also Requires Separating Them First
-// TODO: Neither Sessions Nor Connections Are Capped, So One Datagram From Any Novel Source Buys A Socket, A Pump Task And A Challenge To Whatever Address It Named; The Reference Caps Both Per Port And Per Address
-// TODO: The Violation Score Is Keyed On A Forgeable Source Endpoint, So Roughly Forty Spoofed Datagrams Action A Named Player And Refuse Their Own Traffic; This Is The One Behaviour Here That Is Worse Than The Transparent Relay This Replaced
-// TODO: Both Of The Above, Plus Making The Challenge Random And The Under-Attack Indicator Live, Are Planned In "docs/superpowers/plans/2026-09-11-proxy-hostile-traffic-hardening.md"
 /// <summary>
 ///     The managed, cross-platform proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
 ///     Heroes Of Newerth clients throttle their own traffic on the public port range until the proxy authenticates them, so each forwarder issues a challenge to every session on creation and this service renews those challenges periodically.
@@ -18,7 +13,6 @@ public sealed class UDPProxyService : BackgroundService
     // "MAX_IDLE_TIME": A Session That Has Never Authenticated Is Swept Far Sooner Than One Carrying A Real Match, Because Any Datagram From A Novel Source Creates One And The Repeat Above Then Transmits To It Every Second
     // Eviction Only Runs On A Rotating Pass, So The Effective Unauthenticated Lifetime Is Fifteen To Twenty-Five Seconds Rather Than Exactly Fifteen
     // This Timeout Is What Makes Repeating To Every Session Affordable, Not What Bounds It: The Reference's Own Bound Also Includes "MAX_GAME_CONNECTIONS" (24), "MAX_GAME_CONNECTIONS_PER_IP" (10), And Refusing New Connections While Its Own Under-Attack Indicator Is Over Threshold
-    // TODO: COMPEL Has None Of Those Caps, So A Spoofed-Source Flood Still Buys A Socket And A Pump Task Per Datagram For Up To The Unauthenticated Lifetime Above, Which COMPEL Would Need A Policy For
     internal static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
 
     // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
@@ -29,12 +23,6 @@ public sealed class UDPProxyService : BackgroundService
 
     // Derived Rather Than Written Down Twice, So The Renewal Interval Stays What It Says It Is If Either Value Changes
     internal static readonly int MaintenancePassesPerRotation = (int) Math.Max(1, ChallengeRenewalInterval.Ticks / MaintenanceInterval.Ticks);
-
-    // "UNDER_ATTACK_THRESHOLD": Refusals Within One Window Above Which The Proxy Reports Itself Under Attack
-    private const int UnderAttackThreshold = 1000;
-
-    // The Reference Resets Its Indicator Every Five Minutes Of Its Own Housekeeping Tick; Derived From The Interval Rather Than Written Down Twice, So It Stays Five Minutes If The Interval Changes
-    internal static readonly int UnderAttackWindowPasses = (int) Math.Max(1, TimeSpan.FromMinutes(5).Ticks / MaintenanceInterval.Ticks);
 
     private readonly MatchServerManagerOptions options;
     private readonly PortPlan ports;
