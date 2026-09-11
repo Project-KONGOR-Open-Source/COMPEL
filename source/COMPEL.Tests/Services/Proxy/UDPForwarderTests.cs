@@ -186,23 +186,15 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Refuses(GameDatagram(challenge, quota))).IsTrue();
     }
 
-    // A Challenge The Proxy Never Issued Is Not The Same As A Client That Has Not Been Challenged Yet: The Reference Charges It Separately And Drops It, Rather Than Admitting It Under The Unauthenticated Allowance
-    // Authenticated First, Because A Session Still Within Its Unknown-Challenge Grace Is Covered Separately By "A_Session_That_Has_Authenticated_Is_Charged_For_An_Unknown_Challenge"
+    // A Challenge The Proxy Never Issued Is Refused Whether Or Not The Session Is Still Within Its Grace; What The Grace Changes Is The Charge, Which The Two Grace Tests Cover
     [Test]
     public async Task A_Challenge_The_Proxy_Never_Issued_Is_Dropped()
     {
         await using ForwarderProbe probe = new ();
 
-        uint issued = await probe.Establish();
-
-        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
-
-        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+        await probe.Establish();
 
         await Assert.That(await probe.Refuses(GameDatagram(challenge: 0xDEADBEEF, counter: 1))).IsTrue();
-
-        // The Forwarder Must Charge The Violation, Not Merely Drop It: Without The Charge, A Source Below The Expected Rate Never Becomes Actioned And The Recovery-Depends-On-Rate Contract Silently Stops Holding
-        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsGreaterThanOrEqualTo(scoreBefore + ViolationScoreContainer.ChallengeViolationWeight);
     }
 
     [Test]
