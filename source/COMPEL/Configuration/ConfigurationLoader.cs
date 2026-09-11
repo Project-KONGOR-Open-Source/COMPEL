@@ -67,19 +67,19 @@ public static class ConfigurationLoader
 
         // A Setting Explicitly Set To "null" In The File Deserialises As A Null Object, So Each Is Coalesced Back To Its Default
         // This Keeps A Null Setting Behaving Like A Missing One (Falling Back To Its Default) Rather Than Faulting Later When Its Value Is Read
-        file.UserName             ??= new ();
-        file.Password             ??= new ();
-        file.Instances            ??= new ();
-        file.WarmInstancesTarget  ??= new ();
-        file.Gateway              ??= new ();
-        file.Location             ??= new ();
-        file.ServerNamePrefix     ??= new ();
-        file.UseProxy             ??= new ();
-        file.PortRangeOffset      ??= new ();
-        file.RuntimeArtefactsPath ??= new ();
-        file.CDNSynchronisation   ??= new ();
-        file.AuthenticationToken  ??= new ();
-        file.ControlPlanePort     ??= new ();
+        file.UserName                        ??= new ();
+        file.Password                        ??= new ();
+        file.Instances                       ??= new ();
+        file.WarmInstancesTarget             ??= new ();
+        file.Gateway                         ??= new ();
+        file.Location                        ??= new ();
+        file.ServerNamePrefix                ??= new ();
+        file.UseProxy                        ??= new ();
+        file.PortRangeOffset                 ??= new ();
+        file.RuntimeArtefactsPath            ??= new ();
+        file.CDNSynchronisation              ??= new ();
+        file.ControlPlaneAuthenticationToken ??= new ();
+        file.ControlPlanePort                ??= new ();
 
         return file;
     }

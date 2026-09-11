@@ -136,7 +136,7 @@ builder.Services.AddOptions<MatchServerManagerOptions>().Configure(options =>
     options.RuntimeArtefactsPath = configuration.RuntimeArtefactsPath.Value;
 }).ValidateOnStart();
 
-builder.Services.AddOptions<ControlPlaneOptions>().Configure(options => options.AuthenticationToken = configuration.AuthenticationToken.Value);
+builder.Services.AddOptions<ControlPlaneOptions>().Configure(options => options.AuthenticationToken = configuration.ControlPlaneAuthenticationToken.Value);
 
 builder.Services.AddOptions<CDNOptions>().Configure(options => options.Synchronisation = configuration.CDNSynchronisation.Value);
 

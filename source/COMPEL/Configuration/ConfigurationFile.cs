@@ -17,7 +17,7 @@ public sealed class ConfigurationFile
     public PortRangeOffsetSetting PortRangeOffset { get; set; } = new ();
     public RuntimeArtefactsPathSetting RuntimeArtefactsPath { get; set; } = new ();
     public CDNSynchronisationSetting CDNSynchronisation { get; set; } = new ();
-    public AuthenticationTokenSetting AuthenticationToken { get; set; } = new ();
+    public ControlPlaneAuthenticationTokenSetting ControlPlaneAuthenticationToken { get; set; } = new ();
     public ControlPlanePortSetting ControlPlanePort { get; set; } = new ();
 }
 
@@ -87,7 +87,7 @@ public sealed class CDNSynchronisationSetting
     public string Description => "Whether to synchronise the match server distribution from the CDN on startup. Set to 'false' to skip the initial synchronisation for development and testing, in which case the existing local distribution is used; the '/sync' management endpoint can still trigger a synchronisation on demand.";
 }
 
-public sealed class AuthenticationTokenSetting
+public sealed class ControlPlaneAuthenticationTokenSetting
 {
     public string Value { get; set; } = "...";
     public string Description => "The bearer token that NEXUS and host operators must present to use the remote management endpoints (status, synchronisation, and instance lifecycle). Leave as '...' (or empty) to disable remote management. The control plane serves plain HTTP, so expose it only on a trusted network or behind a TLS-terminating reverse proxy; otherwise the token travels in cleartext.";
