@@ -37,7 +37,7 @@ public sealed record StatusResponse
     bool ProxyRunning,
     bool? PingResponderBound,
     int ProxyFailedForwarderCount,
-    int ProxyDroppedDatagramCount,
+    long ProxyDroppedDatagramCount,
     bool ProxyIsUnderAttack,
     double UptimeSeconds
 );

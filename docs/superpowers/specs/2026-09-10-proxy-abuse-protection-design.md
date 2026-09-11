@@ -70,7 +70,7 @@ ChallengeMaximumCounter            = ushort.MaxValue; // reference advertises 72
 ChallengeMaximumGameCommandCounter = ushort.MaxValue; // reference advertises 40
 ```
 
-The longer expiry is a deliberate safety margin, not a fault, and is retained.
+The longer expiry is a trade-off rather than a plain margin: with an unmatched challenge now refused, sixty seconds is a longer window in which a client can echo something this proxy no longer knows. Task 9's per-second repeat is what makes that safe, by re-issuing the current challenge often enough that a client rarely has to fall back on the full expiry.
 
 ### Violation score is a separate decaying accumulator
 
@@ -104,7 +104,7 @@ In scope:
 1. Minimum-length validation, per kind.
 2. Reading the challenge and counter from incoming datagrams.
 3. Accepting the current *and* previous challenge during renewal.
-4. Advertising and enforcing per-kind quotas, plus the pre-authentication cap.
+4. Advertising per-kind quotas and enforcing the packet quota, plus the pre-authentication cap. The game-command quota is advertised but not enforced, because the netcmd parsing it would need is deferred.
 5. Duplicate counter detection.
 6. The decaying violation score container and the actionable threshold.
 7. The under-attack indicator, and counters on `/status`.
@@ -234,4 +234,4 @@ The material risk is a false positive: dropping a legitimate player mid-match pr
 
 A second, accepted risk: COMPEL's ten-second renewal covers a longer window than the reference's five-second refresh, so a burst inside one window is tolerated where the reference might have acted. The sustained rate is what matters, and a longer window is more forgiving rather than less.
 
-A third: the seen-counter set is sized from the quota, so a larger renewal interval costs proportionally more memory per session. At the intended values this is under three kilobytes per session across both windows and irrelevant, but the coupling is noted so a much longer interval is not chosen carelessly.
+A third: the seen-counter set is sized from the quota, so a larger renewal interval costs proportionally more memory per session. At the intended values this is roughly 9.3 kilobytes per session across the six retained windows at the game quota, still irrelevant, but the coupling is noted so a much longer interval is not chosen carelessly.
