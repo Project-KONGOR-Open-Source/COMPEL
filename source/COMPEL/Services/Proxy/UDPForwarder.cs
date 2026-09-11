@@ -175,10 +175,10 @@ internal sealed class UDPForwarder : IDisposable
         uint sequence = NextChallengeSequence();
         challenges.Rotate(sequence, packetQuota);
 
-        uint issuedTimestamp = (uint)timeProvider.GetUtcNow().ToUnixTimeSeconds();
-
         foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
         {
+            uint issuedTimestamp = pair.Value.NextIssuedTimestamp();
+
             Volatile.Write(ref pair.Value.IssuedTimestamp, issuedTimestamp);
             TransmitChallenge(pair.Key, sequence, issuedTimestamp);
         }

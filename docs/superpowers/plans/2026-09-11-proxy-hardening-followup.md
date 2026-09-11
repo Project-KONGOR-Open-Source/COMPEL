@@ -89,15 +89,15 @@
 - Consumes: `ClientSession.NextIssuedTimestamp()`
 - Produces: Strictly monotonic timestamps across challenge rotations per session.
 
-- [ ] **Step 1: Write failing test in `UDPForwarderTests.cs`**
+- [x] **Step 1: Write failing test in `UDPForwarderTests.cs`**
   Add `Rotate_Challenges_In_Same_Second_Produces_Strictly_Increasing_Timestamp_For_Session`:
   Create a session, record initial challenge timestamp. Run `RotateChallenges()` immediately without advancing the clock (same Unix second). Verify the emitted challenge packet timestamp is strictly greater than the initial timestamp.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
   Run: `dotnet test source/COMPEL.slnx`
   Expected: FAIL because raw `GetUtcNow().ToUnixTimeSeconds()` does not advance within the same second.
 
-- [ ] **Step 3: Update `RotateChallenges` implementation**
+- [x] **Step 3: Update `RotateChallenges` implementation**
   In `UDPForwarder.RotateChallenges`:
   ```csharp
   uint sequence = NextChallengeSequence();
@@ -111,11 +111,11 @@
   }
   ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
   Run: `dotnet test source/COMPEL.slnx`
   Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add source/COMPEL/Services/Proxy/UDPForwarder.cs source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs
   git commit -m "Enforce Strictly Monotonic Challenge Timestamps On Rotation"

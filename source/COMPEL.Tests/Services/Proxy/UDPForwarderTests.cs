@@ -285,6 +285,24 @@ public sealed class UDPForwarderTests
         }
     }
 
+    [Test]
+    public async Task Rotate_Challenges_In_Same_Second_Produces_Strictly_Increasing_Timestamp_For_Session()
+    {
+        ControllableTimeProvider clock = new ();
+        await using ForwarderProbe probe = new (clock);
+
+        await Assert.That(await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0))).IsTrue();
+
+        uint initialTimestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+
+        // Do Not Advance Clock: Rotation Happens Within The Same Unix Second
+        probe.Forwarder.RotateChallenges();
+
+        uint rotatedTimestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+
+        await Assert.That(rotatedTimestamp).IsGreaterThan(initialTimestamp);
+    }
+
     // The Mark Advanced On Every Transmit Rather Than Per Challenge, So It Ran Ahead Of The Clock At One Per Session Per Second And A Restart Then Issued Timestamps The Client Rejected As Old
     // One Challenge From A Fresh Forwarder Cannot See That, Which Is Why The Original Test Passed Against It
     // A Second Session Is What Distinguishes A Per-Session Floor From A Forwarder-Level One That Merely Advances On Value Rather Than On Transmit; One Session Alone Cannot Tell The Two Apart
