@@ -2,8 +2,9 @@ namespace COMPEL.Services.Proxy;
 
 /// <summary>
 ///     Scores abusive behaviour per source address and reports when a source's score is high enough to act upon.
-///     Every datagram costs its source a little, every violation costs its weight on top, and a drain proportional to elapsed time removes score again, which reproduces the reference proxy's accumulate-and-decay model: a source within the expected packet rate never accumulates, while one above it does and recovers only once it stops.
-///     No state is persisted and nothing is attributed to an account, because at this layer there is only an address and a datagram.
+///     Every datagram costs its source an arrival score, while specific violations accumulate a violation score.
+///     To prevent a spoofed source from silencing a legitimate player, actioning a source (refusing all its traffic) depends on its sustained arrival rate alone.
+///     Violation weights accumulate for logging, attack indicator scoring, and diagnostics without gating whether valid traffic from that source is relayed.
 /// </summary>
 internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
 {
@@ -37,7 +38,7 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     // The Reference Drains Only Once More Than This Much Time Has Passed, So A Pass That Runs Early Returns Without Advancing Its Mark Rather Than Draining A Partial Amount And Discarding The Remainder
     private static readonly TimeSpan MinimumDrainInterval = TimeSpan.FromMilliseconds(900);
 
-    private readonly ConcurrentDictionary<IPEndPoint, int> scores = new ();
+    private readonly ConcurrentDictionary<IPEndPoint, SourceScore> scores = new ();
 
     private long lastDrainTimestamp = timeProvider.GetTimestamp();
 
@@ -49,37 +50,42 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
     /// <summary>
     ///     Charges <paramref name="source"/> for the arrival of one datagram, whatever it contains.
     ///     Called exactly once per datagram, before any check, so that a flood carrying no detectable violation is still scored.
-    ///     Nothing extra is charged for a source that is already actionable: the proxy drops locally rather than blocking the traffic, so an actioned client keeps sending, and charging it further would make the state permanent for any client above roughly a tenth of the expected rate.
-    ///     Recovery therefore depends on rate, which is what <see cref="EstimatedPacketsPerSecond"/> expresses: a source below it recovers, a source above it stays actioned.
     /// </summary>
     internal void ChargeArrival(IPEndPoint source)
-        => scores.AddOrUpdate(source, PacketScore, static (_, score) => Math.Min(score + PacketScore, MaximumViolationScore));
+        => scores.AddOrUpdate(
+            source,
+            static _ => new SourceScore(PacketScore, 0),
+            static (_, existing) => new SourceScore(Math.Min(existing.ArrivalScore + PacketScore, MaximumViolationScore), existing.ViolationScore));
 
     /// <summary>
     ///     Charges <paramref name="weight"/> against <paramref name="source"/> for a specific violation, on top of the arrival already charged for the same datagram.
-    ///     The outcome is read separately through <see cref="IsWithinAllowance"/>, because the score is recorded whether or not the source was already actionable.
+    ///     Violation weights accumulate for diagnostics and attack indicators, but do not gate whether valid traffic is relayed.
     /// </summary>
     internal void ChargeViolation(IPEndPoint source, int weight)
-        => scores.AddOrUpdate(source,
-
-            // Both Factories Are Static And Take The Weight As State, So Charging Allocates No Closure On The Datagram Path
-            static (_, violationWeight) => Math.Min(violationWeight, MaximumViolationScore),
-            static (_, score, violationWeight) => Math.Min(score + violationWeight, MaximumViolationScore),
+        => scores.AddOrUpdate(
+            source,
+            static (_, violationWeight) => new SourceScore(0, Math.Min(violationWeight, MaximumViolationScore)),
+            static (_, existing, violationWeight) => new SourceScore(existing.ArrivalScore, Math.Min(existing.ViolationScore + violationWeight, MaximumViolationScore)),
             weight);
 
     /// <summary>
-    ///     Whether <paramref name="source"/> is still within <see cref="ActionableThreshold"/>. Records nothing and begins tracking nothing, so it is safe to call for every datagram.
+    ///     Whether <paramref name="source"/>'s sustained arrival rate is within <see cref="ActionableThreshold"/>.
+    ///     Driven solely by arrival score so spoofed violation datagrams cannot silence a player.
     /// </summary>
-    internal bool IsWithinAllowance(IPEndPoint source) => Score(source) <= ActionableThreshold;
+    internal bool IsWithinAllowance(IPEndPoint source) => ScoreArrival(source) <= ActionableThreshold;
 
     /// <summary>
-    ///     The current score for <paramref name="source"/>, or zero if it carries none.
+    ///     The current arrival score for <paramref name="source"/>, or zero if it carries none.
     /// </summary>
-    internal int Score(IPEndPoint source) => scores.TryGetValue(source, out int score) ? score : 0;
+    internal int ScoreArrival(IPEndPoint source) => scores.TryGetValue(source, out SourceScore score) ? score.ArrivalScore : 0;
+
+    /// <summary>
+    ///     The current total score (arrival + violation) for <paramref name="source"/>, or zero if it carries none, clamped to <see cref="MaximumViolationScore"/>.
+    /// </summary>
+    internal int Score(IPEndPoint source) => scores.TryGetValue(source, out SourceScore score) ? Math.Min(score.ArrivalScore + score.ViolationScore, MaximumViolationScore) : 0;
 
     /// <summary>
     ///     Removes score from every tracked source in proportion to the time elapsed since the last drain, flooring at zero, and forgets any source that reaches it so an address which has stopped misbehaving is not tracked for the life of the process.
-    ///     Only one call may be in progress at a time, which the proxy's single maintenance loop satisfies. The elapsed-time mark is unsynchronised, so concurrent calls would lose an update to it and measure the following pass from the wrong point; the per-source writes would not double-drain, because each is conditional on the score it read.
     /// </summary>
     internal void Drain()
     {
@@ -91,21 +97,23 @@ internal sealed class ViolationScoreContainer(TimeProvider timeProvider)
 
         lastDrainTimestamp = now;
 
-        // The Amount Stays Fractional And The Subtraction's Result Is Truncated, Which Is What The Reference Does: Its Score Is An Unsigned Integer Assigned From A Float Subtraction, So Each Source Rounds Down And Drains Up To One More Than The Exact Amount Rather Than Up To One Less
-        // No Score Can Exceed The Maximum, So Clamping The Amount To It Keeps A Long Pause Between Passes From Overflowing The Conversion Below
         double drainAmount = Math.Min(elapsed.TotalSeconds * EstimatedPacketsPerSecond, MaximumViolationScore);
 
-        foreach (KeyValuePair<IPEndPoint, int> entry in scores)
+        foreach (KeyValuePair<IPEndPoint, SourceScore> entry in scores)
         {
-            int remaining = entry.Value > drainAmount ? (int)(entry.Value - drainAmount) : 0;
+            int remainingArrival = entry.Value.ArrivalScore > drainAmount ? (int)(entry.Value.ArrivalScore - drainAmount) : 0;
+            int remainingViolation = entry.Value.ViolationScore > drainAmount ? (int)(entry.Value.ViolationScore - drainAmount) : 0;
 
-            // A Source Drained To Zero Is Forgotten, So An Address That Has Stopped Misbehaving Is Not Tracked For The Life Of The Process
-            // Both Writes Are Conditional On The Score Not Having Changed Since It Was Read: If A Charge Landed During This Pass, The Source Simply Waits For The Next One, Which Loses A Drain Rather Than A Charge
-            if (remaining is 0)
+            if (remainingArrival is 0 && remainingViolation is 0)
                 scores.TryRemove(entry);
-
             else
-                scores.TryUpdate(entry.Key, remaining, entry.Value);
+                scores.TryUpdate(entry.Key, new SourceScore(remainingArrival, remainingViolation), entry.Value);
         }
+    }
+
+    private readonly struct SourceScore(int arrivalScore, int violationScore)
+    {
+        public int ArrivalScore { get; } = arrivalScore;
+        public int ViolationScore { get; } = violationScore;
     }
 }
