@@ -42,6 +42,11 @@ public sealed class UDPProxyService : BackgroundService
     // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private readonly SemaphoreSlim lifecycleGate = new (1, 1);
+    private readonly SemaphoreSlim restartSignal = new (0);
+    private CancellationTokenSource? cycleCancellationSource;
+    private TaskCompletionSource<bool>? pendingRestartCompletion;
+
     private volatile bool running;
     private int failedForwarderCount;
     private long droppedDatagramCount;
@@ -56,6 +61,11 @@ public sealed class UDPProxyService : BackgroundService
         scoreContainer = new ViolationScoreContainer(timeProvider);
         attackIndicator = new AttackIndicatorContainer(timeProvider);
     }
+
+    /// <summary>
+    ///     Whether the proxy is enabled in configuration.
+    /// </summary>
+    public bool IsEnabled => options.UseProxy;
 
     public bool IsRunning => running;
 
@@ -79,6 +89,45 @@ public sealed class UDPProxyService : BackgroundService
     /// </summary>
     public bool IsUnderAttack => attackIndicator.IsUnderAttack;
 
+    /// <summary>
+    ///     Requests that the proxy restart its forwarders, rebinding its public ports.
+    /// </summary>
+    public async Task<bool> RequestRestart(CancellationToken cancellationToken)
+    {
+        if (options.UseProxy is false)
+            throw new InvalidOperationException("The Proxy Is Disabled");
+
+        TaskCompletionSource<bool> completionSource;
+
+        await lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            if (pendingRestartCompletion is not null)
+            {
+                completionSource = pendingRestartCompletion;
+            }
+
+            else
+            {
+                completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pendingRestartCompletion = completionSource;
+
+                if (cycleCancellationSource is not null && cycleCancellationSource.IsCancellationRequested is false)
+                    cycleCancellationSource.Cancel();
+                else
+                    restartSignal.Release();
+            }
+        }
+
+        finally
+        {
+            lifecycleGate.Release();
+        }
+
+        return await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (options.UseProxy is false)
@@ -90,34 +139,77 @@ public sealed class UDPProxyService : BackgroundService
             return;
         }
 
-        for (int instance = 0; instance < ports.Instances; instance++)
+        while (stoppingToken.IsCancellationRequested is false)
         {
-            TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, ProxyForwarderKind.Game);
-            TryAddForwarder(ports.PublicVoiceStart + instance, ports.LocalVoiceStart + instance, ProxyForwarderKind.Voice);
+            await RunCycle(stoppingToken).ConfigureAwait(false);
+
+            if (stoppingToken.IsCancellationRequested)
+                break;
+
+            if (pendingRestartCompletion is null)
+            {
+                try { await restartSignal.WaitAsync(stoppingToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+    }
+
+    private async Task RunCycle(CancellationToken stoppingToken)
+    {
+        TaskCompletionSource<bool>? currentRestartCompletion;
+        CancellationTokenSource cycleCancellation;
+
+        await lifecycleGate.WaitAsync(stoppingToken).ConfigureAwait(false);
+
+        try
+        {
+            cycleCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            cycleCancellationSource = cycleCancellation;
+
+            currentRestartCompletion = pendingRestartCompletion;
+            pendingRestartCompletion = null;
+
+            failedForwarderCount = 0;
+            forwarders.Clear();
+
+            for (int instance = 0; instance < ports.Instances; instance++)
+            {
+                TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, ProxyForwarderKind.Game);
+                TryAddForwarder(ports.PublicVoiceStart + instance, ports.LocalVoiceStart + instance, ProxyForwarderKind.Voice);
+            }
+
+            if (forwarders.Count is 0)
+            {
+                logger.LogError("No Proxy Forwarders Could Be Started");
+
+                ready.TrySetResult(false);
+                currentRestartCompletion?.TrySetResult(false);
+
+                return;
+            }
+
+            running = true;
+
+            ready.TrySetResult(true);
+            currentRestartCompletion?.TrySetResult(true);
+
+            logger.LogInformation
+            (
+                "Proxy Forwarding {Instances} Instance(s): Public Game {PublicGameStart}-{PublicGameEnd} And Voice {PublicVoiceStart}-{PublicVoiceEnd} To Local Game {LocalGameStart}-{LocalGameEnd} And Voice {LocalVoiceStart}-{LocalVoiceEnd}",
+                ports.Instances, ports.PublicGameStart, ports.PublicGameEnd, ports.PublicVoiceStart, ports.PublicVoiceEnd, ports.LocalGameStart, ports.LocalGameEnd, ports.LocalVoiceStart, ports.LocalVoiceEnd
+            );
         }
 
-        if (forwarders.Count is 0)
+        finally
         {
-            logger.LogError("No Proxy Forwarders Could Be Started");
-
-            ready.TrySetResult(false);
-
-            return;
+            lifecycleGate.Release();
         }
 
-        running = true;
+        CancellationToken cycleToken = cycleCancellation.Token;
 
-        ready.TrySetResult(true);
+        List<Task> tasks = forwarders.Select(forwarder => forwarder.Run(cycleToken)).ToList();
 
-        logger.LogInformation
-        (
-            "Proxy Forwarding {Instances} Instance(s): Public Game {PublicGameStart}-{PublicGameEnd} And Voice {PublicVoiceStart}-{PublicVoiceEnd} To Local Game {LocalGameStart}-{LocalGameEnd} And Voice {LocalVoiceStart}-{LocalVoiceEnd}",
-            ports.Instances, ports.PublicGameStart, ports.PublicGameEnd, ports.PublicVoiceStart, ports.PublicVoiceEnd, ports.LocalGameStart, ports.LocalGameEnd, ports.LocalVoiceStart, ports.LocalVoiceEnd
-        );
-
-        List<Task> tasks = forwarders.Select(forwarder => forwarder.Run(stoppingToken)).ToList();
-
-        tasks.Add(RunMaintenanceLoop(stoppingToken));
+        tasks.Add(RunMaintenanceLoop(cycleToken));
 
         try
         {
@@ -130,13 +222,36 @@ public sealed class UDPProxyService : BackgroundService
 
         finally
         {
-            running = false;
+            await lifecycleGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
-            foreach (UDPForwarder forwarder in forwarders)
-                forwarder.Dispose();
+            try
+            {
+                running = false;
 
-            forwarders.Clear();
+                foreach (UDPForwarder forwarder in forwarders)
+                    forwarder.Dispose();
+
+                forwarders.Clear();
+
+                cycleCancellation.Dispose();
+
+                if (ReferenceEquals(cycleCancellationSource, cycleCancellation))
+                    cycleCancellationSource = null;
+            }
+
+            finally
+            {
+                lifecycleGate.Release();
+            }
         }
+    }
+
+    public override void Dispose()
+    {
+        lifecycleGate.Dispose();
+        restartSignal.Dispose();
+
+        base.Dispose();
     }
 
     private void TryAddForwarder(int publicPort, int localPort, ProxyForwarderKind kind)
