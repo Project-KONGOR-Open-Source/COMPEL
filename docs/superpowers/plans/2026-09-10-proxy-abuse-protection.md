@@ -3093,6 +3093,230 @@ git commit -m "Repeat Challenges Only To Authenticated Sessions And Bound The Dr
 
 ---
 
+### Task 11: Fix Challenge Delivery
+
+**Files:**
+- Modify: `source/COMPEL/Services/Proxy/UDPForwarder.cs`
+- Modify: `source/COMPEL/Services/Proxy/UDPProxyService.cs`
+- Modify: `source/COMPEL/Services/Proxy/ChallengeQuota.cs`
+- Modify: `source/COMPEL/Services/Proxy/SessionChallengeState.cs`
+- Test: `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
+- Test: `source/COMPEL.Tests/Services/Proxy/ChallengeQuotaTests.cs`
+
+**Why this task exists.** The final review found that every remaining defect sits in challenge *delivery* rather than in scoring or validation, and that two of them were introduced by Task 10 — each one written to fix an earlier review finding. This task closes them.
+
+**1. The challenge timestamp drifts hours ahead of the wall clock, and a restart then locks clients out.** `lastIssuedTimestamp` is a **forwarder-level** field bumped on every `TransmitChallenge`, and `RepeatChallenges` transmits once per session per second. With `K` sessions the mark advances `K` per second against a wall clock advancing one, so it drifts ahead at `K − 1` per second, permanently: ten sessions over a thirty-five minute match is over five hours of drift.
+
+On restart the field resets to zero, so new challenges carry true wall-clock timestamps — **below** the drifted value the client stored. The client's rule (`c_enhanced_watermark.cpp:815`) accepts a replacement only if the new timestamp is strictly greater, so it rejects every challenge COMPEL issues and keeps echoing one COMPEL no longer knows. It is charged until actioned, then falls back to challenge zero and its own limiter, which caps it at roughly ninety packets per minute and returns before both the normal and the reliable send — so the player goes **silent, not slow**, and never recovers, because the expiry path never clears the stored value. The only cure from the player's side is restarting Heroes of Newerth.
+
+So COMPEL cannot currently be restarted without breaking reconnects for every player in a live match. The comment at `UDPForwarder.cs:231` claims the opposite of this behaviour and is the clearest statement of the bug.
+
+The `+ 1` floor must stay — it is what lets a re-challenge inside the same wall-clock second be accepted. The drift comes from bumping on every *transmit*. Two changes remove it: hold the floor **per session**, and advance it only when the challenge **value** changes. A repeat carries the same value, and the client discards a repeat of a value it holds as a duplicate **without reading the timestamp**, so a repeat needs no fresh one.
+
+**2. The repeat is gated off in the only state where the challenge is actually missing.** Task 10 gated `RepeatChallenges` on `HasAuthenticated` to bound an amplification vector. But `MarkAuthenticated` fires only on a matched non-zero challenge, so a session whose single challenge was **lost** is never authenticated and never gets a repeat — which is precisely the case the repeat exists for. Its next challenge comes up to a full rotation later, during which the client exhausts its unauthenticated allowance in under two seconds and goes silent for the remaining eight. That is a first connect, a NAT rebind, or any session recreation.
+
+The gate also missed `RotateChallenges`, which has no guard, so a spoofed session still receives a challenge per rotation for its whole two-minute idle life — thirteen datagrams out for one in. And `session.Touch()` runs **before** validation, so a source sending nothing but refused traffic keeps its session alive indefinitely and never idles out at all.
+
+The reference solves all of this with the mechanism COMPEL skipped: it repeats to **every** connection unconditionally and bounds the cost with a fifteen-second idle timeout (`MAX_IDLE_TIME`, `main.cpp:42`) plus connection caps, and it refreshes `lastSeen` only **after** validation passes (`main.cpp:1845`). Porting the timeout is smaller than the gate it replaces and fixes both problems at once.
+
+**3. Drop-report slots leak, and can silence drop logging permanently.** `reportedDropCount` is capped at a thousand and decremented only in `EvictIdleSessions`. Two paths add an entry that is never removed: a drop charged when `GetOrCreateSession` throws, where no session exists to evict; and a session torn down by `PumpServerToClient`'s `finally` rather than by the idle sweep. Each permanently consumes a slot, and once the thousand are gone no drop is ever logged again for the life of the process.
+
+**4. The compliant-client margin is real but unpinned.** The reference's refresh loop starts its counter *at* `CHALLENGE_REFRESH_TIME` and fires when it exceeds it, so it refreshes on the sixth pass, not the fifth — its effective rate is 720/6 = 120 a second, not 144. COMPEL advertising 144 leaves a compliant client self-limiting to 135 against a 140 drain: a 3.7% margin where the reference had 27.5%. It holds, so the rate is **not** being changed here, but nothing asserts the relationship, and raising the rate or lowering the drain later would flip every player into slow accumulation with no test failing.
+
+- [ ] **Step 1: Fact verification**
+
+```bash
+P="source/COMPEL/bin/Publish/HoN_Proxy/HoN/branches/retail/Tool/HoNProxy/main.cpp"
+C="C:/Users/SADS-810/Source/HON/src/k2/c_enhanced_watermark.cpp"
+grep -nE "define (MAX_IDLE_TIME|CHALLENGE_REFRESH_TIME)" "$P"
+sed -n '1173p;1217p' "$P"
+sed -n '1843,1847p' "$P"
+sed -n '826,840p' "$C"
+```
+
+Expected: `MAX_IDLE_TIME` 15 seconds and `CHALLENGE_REFRESH_TIME` 5; the counter initialised *to* `CHALLENGE_REFRESH_TIME` and the `++counter > CHALLENGE_REFRESH_TIME` test that makes the effective refresh six passes; `lastSeen` refreshed only after validation; and the client's duplicate branch, which logs and does nothing else — confirming a repeat of a held value needs no fresh timestamp.
+
+- [ ] **Step 2: Write the failing tests**
+
+```csharp
+    // The Mark Advanced On Every Transmit Rather Than Per Challenge, So It Ran Ahead Of The Clock At One Per Session Per Second And A Restart Then Issued Timestamps The Client Rejected As Old
+    // One Challenge From A Fresh Forwarder Cannot See That, Which Is Why The Original Test Passed Against It
+    [Test]
+    public async Task The_Challenge_Timestamp_Does_Not_Drift_Ahead_Of_The_Clock()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint issued = await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
+
+        // Far More Transmits Than Wall-Clock Seconds Will Pass During Them
+        for (int repeat = 0; repeat < 50; repeat++)
+            probe.Forwarder.RepeatChallenges();
+
+        await DrainUntilIdle(probe.Client);
+
+        probe.Forwarder.RotateChallenges();
+
+        uint timestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+        uint ceiling = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 2;
+
+        await Assert.That(timestamp).IsLessThanOrEqualTo(ceiling);
+    }
+
+    // The Repeat Exists So One Lost Challenge Cannot Leave A Client Throttled, So It Must Reach A Session Whose Only Challenge Was The One That Was Lost
+    [Test]
+    public async Task A_Session_That_Has_Not_Authenticated_Still_Receives_A_Repeat()
+    {
+        await using ForwarderProbe probe = new ();
+
+        // One Datagram Creates The Session And Triggers Its Only Challenge; Nothing Authenticates It
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        await DrainUntilIdle(probe.Client);
+
+        probe.Forwarder.RepeatChallenges();
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
+    }
+```
+
+And in `ChallengeQuotaTests.cs`, the relationship the whole no-false-positive guarantee rests on:
+
+```csharp
+    // A Compliant Client Self-Limits To Fifteen Sixteenths Of The Advertised Quota, So That Rate Must Stay Below The Drain Or Every Player Accumulates Score While Behaving Perfectly
+    // The Margin Is Currently About Four Percent, So Raising A Rate Or Lowering The Drain Without Seeing This Fail Would Action Everyone
+    [Test]
+    public async Task A_Client_Honouring_Its_Own_Soft_Limit_Stays_Below_The_Drain()
+    {
+        int softLimitedRate = ChallengeQuota.GamePacketsPerSecond - (ChallengeQuota.GamePacketsPerSecond / 16);
+
+        await Assert.That(softLimitedRate).IsLessThan(ViolationScoreContainer.EstimatedPacketsPerSecond);
+    }
+```
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
+Expected: the drift test fails (the timestamp is far ahead of the clock) and the repeat test fails (the gate skips the session). The quota test should **pass** — it asserts a relationship that currently holds, and exists to stop it being broken later. Say so if it does not.
+
+- [ ] **Step 4: Hold the timestamp floor per session and advance it only on a new value**
+
+Move the field from `UDPForwarder` to `ClientSession`, and keep the issued timestamp so a repeat can reuse it:
+
+```csharp
+        public uint IssuedTimestamp;
+
+        private long lastIssuedTimestamp;
+
+        /// <summary>
+        ///     The timestamp to stamp into a newly issued challenge: the wall clock, floored so it never repeats or decreases for this session.
+        ///     The floor is what lets a challenge issued inside the same second as its predecessor still be accepted, and it is per session so that transmitting to other sessions cannot run it ahead of the clock.
+        /// </summary>
+        public uint NextIssuedTimestamp()
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long monotonic = Math.Max(lastIssuedTimestamp + 1, now);
+
+            lastIssuedTimestamp = monotonic;
+
+            return (uint)monotonic;
+        }
+```
+
+`SendChallenge` takes a fresh timestamp and records it; `RepeatChallenges` reuses the recorded one, because the client discards a repeat of a value it already holds without reading the timestamp at all:
+
+```csharp
+    public void RepeatChallenges()
+    {
+        foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+            if (pair.Value.Challenges.Current is ChallengeWindow current)
+                TransmitChallenge(pair.Key, current.Challenge, pair.Value.IssuedTimestamp);
+    }
+```
+
+```csharp
+        session.Challenges.Rotate(sequence, packetQuota);
+        session.IssuedTimestamp = session.NextIssuedTimestamp();
+
+        TransmitChallenge(client, sequence, session.IssuedTimestamp);
+```
+
+`TransmitChallenge` now takes the timestamp rather than deriving one, and its comment must describe what the code does:
+
+```csharp
+    private void TransmitChallenge(IPEndPoint client, uint challenge, uint serverCreationTimestamp)
+    {
+        // The Client Accepts A Replacement Only When This Timestamp Is Strictly Greater Than The One It Holds, And It Keys What It Holds On Our Public Port, Which A Restart Does Not Change
+        // So It Comes From The Wall Clock And Advances Only When The Challenge Value Does: Advancing It On Every Transmit Ran It Hours Ahead Of The Clock, And A Restart Then Issued Timestamps The Client Rejected As Old
+```
+
+Remove the forwarder-level `lastIssuedTimestamp` entirely.
+
+- [ ] **Step 5: Repeat to every session, and bound it with the reference's idle timeout instead**
+
+Remove the `HasAuthenticated` gate from `RepeatChallenges` — the code above already omits it. Then bound the cost the way the reference does.
+
+In `UDPProxyService`, beside `IdleSessionTimeout`:
+
+```csharp
+    // "MAX_IDLE_TIME": A Session That Has Never Authenticated Is Swept Far Sooner Than One Carrying A Real Match, Because Any Datagram From A Novel Source Creates One And The Repeat Above Then Transmits To It Every Second
+    // This Is The Bound The Reference Uses, And It Is Why The Reference Can Repeat To Every Connection Unconditionally
+    private static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
+```
+
+and pass it through: `forwarder.EvictIdleSessions(IdleSessionTimeout, UnauthenticatedSessionTimeout);`
+
+In `EvictIdleSessions`, choose per session:
+
+```csharp
+            TimeSpan timeout = pair.Value.HasAuthenticated ? idleTimeout : unauthenticatedTimeout;
+```
+
+And move `session.Touch()` out of the pre-validation path to immediately before the upstream send, so refused traffic no longer extends a session's life — which is what the reference does and what makes the timeout above effective:
+
+```csharp
+            session.Touch();
+
+            try { await session.UpstreamSocket.SendAsync(...
+```
+
+- [ ] **Step 6: Stop leaking drop-report slots**
+
+Decrement wherever a report entry is dropped, not only in the idle sweep. In `PumpServerToClient`'s `finally`, beside the session removal, and on the session-creation-failure path do not consume a slot at all — pass the reason through the unweighted `Drop` **after** the session exists, or accept the entry and release it there. The simplest correct shape is a small helper both removal sites call:
+
+```csharp
+    private void ReleaseDropReport(IPEndPoint client)
+    {
+        if (reportedDrops.TryRemove(client, out _))
+            Interlocked.Decrement(ref reportedDropCount);
+    }
+```
+
+Call it from `EvictIdleSessions` in place of the inline removal, and from `PumpServerToClient`'s `finally`.
+
+- [ ] **Step 7: Correct the reference-rate comments**
+
+`ChallengeQuota`'s three rate comments attribute their values to a five-second refresh. The reference's effective refresh is six passes, so its effective rates are 120, 6.7 and 8.3 a second rather than 144, 8 and 10. Say that the constants are the reference's advertised ceilings over its nominal refresh, note the effective figures, and note that COMPEL's own margin against the drain is consequently narrower than the reference's — which is what the new quota test pins. Do **not** change any rate value.
+
+Also correct `SessionChallengeState`'s "against the reference's thirty seconds", which is about thirty-six on the same arithmetic.
+
+- [ ] **Step 8: Run the tests to verify they pass**
+
+Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
+Expected: build succeeds with 0 warnings; every test passes.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add source/COMPEL/Services/Proxy source/COMPEL.Tests/Services/Proxy
+git commit -m "Stop The Challenge Timestamp Drifting And Repeat To Every Session"
+```
+
+---
+
 ## Final Verification
 
 - [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
@@ -3100,6 +3324,7 @@ git commit -m "Repeat Challenges Only To Authenticated Sessions And Bound The Dr
 - [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
 - [ ] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
 - [ ] COMPEL is restarted while a client is connected, and the client keeps playing: the replacement challenge carries a strictly greater timestamp, so the client accepts it rather than echoing one the proxy no longer knows.
+- [ ] That restart check is run **after** a match has been in progress for several minutes, not immediately after start-up. The timestamp drift this catches only appears once many challenges have been transmitted, which is why a fresh-forwarder test could not see it.
 - [ ] An actioned source sending at an ordinary game rate recovers rather than staying refused, because the proxy drops locally instead of blocking the traffic.
 - [ ] A challenge the proxy never issued is refused rather than admitted under the unauthenticated allowance.
 - [ ] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
