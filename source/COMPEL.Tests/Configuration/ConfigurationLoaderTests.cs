@@ -22,7 +22,7 @@ public sealed class ConfigurationLoaderTests
             {
                 await Assert.That(file.UseProxy.Value).IsTrue();
                 await Assert.That(file.RuntimeArtefactsPath.Value).IsEqualTo("DEFAULT");
-                await Assert.That(file.AuthenticationToken.Value).IsEqualTo("...");
+                await Assert.That(file.ControlPlaneAuthenticationToken.Value).IsEqualTo("...");
                 await Assert.That(file.ControlPlanePort.Value).IsEqualTo(8080);
                 await Assert.That(file.WarmInstancesTarget.Value).IsEqualTo(1);
             }
