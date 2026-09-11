@@ -62,7 +62,7 @@ public sealed class UDPForwarderTests
 
                 await server.SendToAsync(pong, SocketFlags.None, fromServer.Value.Sender);
 
-                forwarder.ChallengeActiveSessions();
+                forwarder.RotateChallenges();
 
                 while (relayedToClient is false || challenged is false)
                 {
@@ -119,10 +119,10 @@ public sealed class UDPForwarderTests
             // Flush Any Challenges Buffered From Session Creation So The Two Values Compared Below Are Read In Issue Order
             await DrainUntilIdle(client);
 
-            forwarder.ChallengeActiveSessions();
+            forwarder.RotateChallenges();
             uint firstValue = await ReadOneChallengeValue(forwarder, client);
 
-            forwarder.ChallengeActiveSessions();
+            forwarder.RotateChallenges();
             uint secondValue = await ReadOneChallengeValue(forwarder, client);
 
             using (Assert.Multiple())
@@ -187,12 +187,15 @@ public sealed class UDPForwarderTests
     }
 
     // A Challenge The Proxy Never Issued Is Not The Same As A Client That Has Not Been Challenged Yet: The Reference Charges It Separately And Drops It, Rather Than Admitting It Under The Unauthenticated Allowance
+    // Authenticated First, Because A Session Still Within Its Unknown-Challenge Grace Is Covered Separately By "A_Session_That_Has_Authenticated_Is_Charged_For_An_Unknown_Challenge"
     [Test]
     public async Task A_Challenge_The_Proxy_Never_Issued_Is_Dropped()
     {
         await using ForwarderProbe probe = new ();
 
-        await probe.Establish();
+        uint issued = await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
 
         int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
 
@@ -246,10 +249,90 @@ public sealed class UDPForwarderTests
         await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(scoreBefore + ViolationScoreContainer.PacketScore);
     }
 
+    // The Client Accepts A Replacement Challenge Only If Its Timestamp Is Strictly Greater Than The One It Holds, And It Keys That On Our Public Port, Which A COMPEL Restart Does Not Change
+    // A Counter That Restarts At Zero Therefore Issues Timestamps The Client Rejects As Old, So This Must Come From The Wall Clock
+    [Test]
+    public async Task The_Challenge_Timestamp_Comes_From_The_Wall_Clock()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        uint before = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        uint timestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+        uint after = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(timestamp).IsGreaterThanOrEqualTo(before);
+            await Assert.That(timestamp).IsLessThanOrEqualTo(after);
+        }
+    }
+
+    // A Lost Challenge Must Be Retried Long Before The Next Rotation, Because The Client Enforces The Advertised Quota Itself And Goes Silent Rather Than Over-Sending
+    [Test]
+    public async Task A_Repeated_Challenge_Carries_The_Same_Value()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint issued = await probe.Establish();
+
+        await DrainUntilIdle(probe.Client);
+
+        // Retried Through "RepeatChallenges" Rather Than "ReadOneChallengeValue", Which Rotates On A Miss And Would Hand Back A Different Value, Failing This For The Wrong Reason
+        uint repeated = 0;
+
+        for (int attempt = 0; attempt < 10 && repeated is 0; attempt++)
+        {
+            probe.Forwarder.RepeatChallenges();
+
+            (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+            if (datagram is not null && IsChallenge(datagram.Value.Payload))
+                repeated = ChallengeValue(datagram.Value.Payload);
+        }
+
+        await Assert.That(repeated).IsEqualTo(issued);
+    }
+
+    // A Client Whose Source Port Changes Keeps Echoing The Challenge It Holds, Because It Keys That On Our Public Port; The New Session Knows Nothing Of It, So Charging For It Would Refuse A Well-Behaved Player
+    [Test]
+    public async Task A_Session_That_Has_Not_Authenticated_Is_Not_Charged_For_An_Unknown_Challenge()
+    {
+        await using ForwarderProbe probe = new ();
+
+        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+
+        // A Counter Partway Through A Window, As A Client Mid-Session Would Carry
+        await Assert.That(await probe.Refuses(GameDatagram(challenge: 0xDEADBEEF, counter: 600))).IsTrue();
+
+        // Refused, But Charged Only The Arrival: The Violation Weight Would Cross The Threshold In Well Under A Second At Ordinary Game Rates
+        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(scoreBefore + ViolationScoreContainer.PacketScore);
+    }
+
+    [Test]
+    public async Task A_Session_That_Has_Authenticated_Is_Charged_For_An_Unknown_Challenge()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint issued = await probe.Establish();
+
+        // "Establish" Echoes Challenge Zero, Which Does Not End The Grace; Admitting A Datagram Under An ISSUED Challenge Is What Proves The Client Is In Sync
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
+
+        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+
+        await Assert.That(await probe.Refuses(GameDatagram(challenge: 0xDEADBEEF, counter: 1))).IsTrue();
+
+        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsGreaterThanOrEqualTo(scoreBefore + ViolationScoreContainer.ChallengeViolationWeight);
+    }
+
     private static bool IsChallenge(byte[] datagram)
         => datagram.Length >= 58 && datagram[40] is 0xFF && datagram[41] is 0xFF && (datagram[42] & 0x40) is not 0 && datagram[43] is 0x00;
 
     private static uint ChallengeValue(byte[] datagram) => BinaryPrimitives.ReadUInt32LittleEndian(datagram.AsSpan(40 + 14));
+
+    private static uint ChallengeTimestamp(byte[] datagram) => BinaryPrimitives.ReadUInt32LittleEndian(datagram.AsSpan(40 + 4));
 
     private static async Task<uint> ReadOneChallengeValue(UDPForwarder forwarder, Socket client)
     {
@@ -261,7 +344,22 @@ public sealed class UDPForwarderTests
                 return ChallengeValue(datagram.Value.Payload);
 
             // Nothing Usable Arrived (Idle Timeout Or A Dropped Challenge); Re-Issue And Try Again
-            forwarder.ChallengeActiveSessions();
+            forwarder.RotateChallenges();
+        }
+
+        throw new InvalidOperationException("No Challenge Packet Was Received");
+    }
+
+    private static async Task<uint> ReadOneChallengeTimestamp(UDPForwarder forwarder, Socket client)
+    {
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(client);
+
+            if (datagram is not null && IsChallenge(datagram.Value.Payload))
+                return ChallengeTimestamp(datagram.Value.Payload);
+
+            forwarder.RotateChallenges();
         }
 
         throw new InvalidOperationException("No Challenge Packet Was Received");
@@ -348,6 +446,8 @@ public sealed class UDPForwarderTests
         internal UDPForwarder Forwarder { get; }
 
         internal ViolationScoreContainer Scores { get; }
+
+        internal Socket Client => client;
 
         internal IPEndPoint ClientEndPoint => client.LocalEndPoint is IPEndPoint boundClient ? boundClient : throw new InvalidOperationException("Could Not Determine The Client Endpoint");
 

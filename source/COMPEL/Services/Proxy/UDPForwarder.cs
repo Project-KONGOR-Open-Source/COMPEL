@@ -140,7 +140,13 @@ internal sealed class UDPForwarder : IDisposable
             // A Non-Zero Challenge This Session Never Issued Or No Longer Retains. The Reference Treats This Separately From A Client That Has Not Been Challenged Yet, Which Echoes Zero And Matches The Session's Unauthenticated Window
             if (window is null)
             {
-                Drop(client, ViolationScoreContainer.ChallengeViolationWeight, "Unknown Challenge");
+                // Refused Either Way, So This Is Not A Relay Path; What The Grace Suppresses Is Only The Violation Weight, Which At Ordinary Game Rates Would Cross The Threshold In Well Under A Second
+                // TODO: The Reference Keys Its Retained Challenges On The Challenge Value Globally With A Per-Address Inner Map, So A Client Whose Source Port Changes Is Matched Immediately And Never Refused At All; Holding Them Per Forwarder Rather Than Per Session Would Remove The Need For This Grace
+                if (session.IsWithinUnknownChallengeGrace)
+                    Drop(client, "Unknown Challenge Within Grace");
+
+                else
+                    Drop(client, ViolationScoreContainer.ChallengeViolationWeight, "Unknown Challenge");
 
                 continue;
             }
@@ -162,6 +168,11 @@ internal sealed class UDPForwarder : IDisposable
                 continue;
             }
 
+            // A Matched Non-Zero Challenge Means The Client Has Demonstrably Accepted One Of Ours, So It No Longer Needs The Benefit Of The Doubt
+            // Matching Only The Unauthenticated Window Proves Nothing, Because A Client That Has Accepted No Challenge At All Echoes Zero
+            if (challenge is not SessionChallengeState.UnauthenticatedChallenge)
+                session.MarkAuthenticated();
+
             try { await session.UpstreamSocket.SendAsync(buffer.AsMemory(0, result.ReceivedBytes), SocketFlags.None, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
             catch (Exception exception) { logger.LogDebug(exception, "Failed To Forward Datagram To Server For {Client}", client); }
@@ -169,12 +180,24 @@ internal sealed class UDPForwarder : IDisposable
     }
 
     /// <summary>
-    ///     Sends a fresh challenge to every active session, renewing their authentication before the client's window lapses.
+    ///     Issues a fresh challenge to every active session, which is what resets each client's packet counter for the next window.
     /// </summary>
-    public void ChallengeActiveSessions()
+    public void RotateChallenges()
     {
         foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
             SendChallenge(pair.Key, pair.Value);
+    }
+
+    /// <summary>
+    ///     Re-sends each session's current challenge without issuing a new one.
+    ///     The reference does this about once a second, so that a single lost challenge datagram cannot leave a client holding an allowance sized for less time than it must now cover.
+    ///     A client ignores a repeat of the challenge it already holds, so this is free of side effects for one that received the original.
+    /// </summary>
+    public void RepeatChallenges()
+    {
+        foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+            if (pair.Value.Challenges.Current is ChallengeWindow current)
+                TransmitChallenge(pair.Key, current.Challenge);
     }
 
     private void SendChallenge(IPEndPoint client, ClientSession session)
@@ -188,7 +211,16 @@ internal sealed class UDPForwarder : IDisposable
         // Rotation Must Happen Before The Challenge Is Sent, So A Reply Arriving The Instant After Send Is Already Matched
         session.Challenges.Rotate(sequence, packetQuota);
 
-        byte[] packet = BuildChallengePacket(sequence, sequence);
+        TransmitChallenge(client, sequence);
+    }
+
+    private void TransmitChallenge(IPEndPoint client, uint challenge)
+    {
+        // The Client Accepts A Replacement Challenge Only When This Timestamp Is Strictly Greater Than The One It Holds, And It Keys What It Holds On Our Public Port, Which A COMPEL Restart Does Not Change
+        // So This Cannot Be The Challenge Counter: That Restarts At Zero On Every Run, And A Restarted COMPEL Would Issue Timestamps A Connected Client Rejects As Old, Leaving It Echoing A Challenge This Proxy No Longer Knows
+        uint serverCreationTimestamp = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        byte[] packet = BuildChallengePacket(serverCreationTimestamp, challenge);
 
         // The Challenge Must Originate From This (Front) Socket So Its Source Address And Port Match The Endpoint The Client Sends Its Game Traffic To, Which Is How The Client Keys The Authenticated Session
         try { frontSocket.SendTo(packet, SocketFlags.None, client); }
@@ -367,6 +399,14 @@ internal sealed class UDPForwarder : IDisposable
 
         public long LastActivityTicks;
 
+        // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
+        // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
+        private static readonly long UnknownChallengeGraceMilliseconds = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
+
+        private readonly long createdTicks = Environment.TickCount64;
+
+        private bool authenticated;
+
         private int disposed;
 
         public ClientSession(Socket upstreamSocket, CancellationToken stoppingToken)
@@ -375,6 +415,15 @@ internal sealed class UDPForwarder : IDisposable
             Cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
             Touch();
+        }
+
+        public bool IsWithinUnknownChallengeGrace
+            => Volatile.Read(ref authenticated) is false && Environment.TickCount64 - createdTicks < UnknownChallengeGraceMilliseconds;
+
+        public void MarkAuthenticated()
+        {
+            if (Volatile.Read(ref authenticated) is false)
+                Volatile.Write(ref authenticated, true);
         }
 
         public void Touch() => Volatile.Write(ref LastActivityTicks, Environment.TickCount64);
