@@ -5,6 +5,9 @@ namespace COMPEL.Tests.Services.Proxy;
 /// </summary>
 internal sealed class ControllableTimeProvider : TimeProvider
 {
+    // An Arbitrary Fixed Point The Wall Clock Is Measured From, Late Enough That A Unix Timestamp Taken From It Is Plausible To Anything Reading One
+    private static readonly DateTimeOffset Epoch = new (2026, 01, 01, 00, 00, 00, TimeSpan.Zero);
+
     private long timestamp;
 
     /// <summary>
@@ -13,6 +16,11 @@ internal sealed class ControllableTimeProvider : TimeProvider
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
     public override long GetTimestamp() => timestamp;
+
+    /// <summary>
+    ///     The wall clock advances with the monotonic one, from a fixed epoch, so a test that moves the clock cannot leave code reading the wall clock out of step with code measuring elapsed time.
+    /// </summary>
+    public override DateTimeOffset GetUtcNow() => Epoch.AddTicks(timestamp);
 
     internal void Advance(TimeSpan interval) => timestamp += interval.Ticks;
 }

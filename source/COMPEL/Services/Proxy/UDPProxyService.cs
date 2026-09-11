@@ -13,13 +13,13 @@ namespace COMPEL.Services.Proxy;
 /// </summary>
 public sealed class UDPProxyService : BackgroundService
 {
-    private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
+    internal static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
 
     // "MAX_IDLE_TIME": A Session That Has Never Authenticated Is Swept Far Sooner Than One Carrying A Real Match, Because Any Datagram From A Novel Source Creates One And The Repeat Above Then Transmits To It Every Second
     // Eviction Only Runs On A Rotating Pass, So The Effective Unauthenticated Lifetime Is Fifteen To Twenty-Five Seconds Rather Than Exactly Fifteen
     // This Timeout Is What Makes Repeating To Every Session Affordable, Not What Bounds It: The Reference's Own Bound Also Includes "MAX_GAME_CONNECTIONS" (24), "MAX_GAME_CONNECTIONS_PER_IP" (10), And Refusing New Connections While Its Own Under-Attack Indicator Is Over Threshold
     // TODO: COMPEL Has None Of Those Caps, So A Spoofed-Source Flood Still Buys A Socket And A Pump Task Per Datagram For Up To The Unauthenticated Lifetime Above, Which COMPEL Would Need A Policy For
-    private static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
+    internal static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
 
     // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
     internal static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
@@ -42,8 +42,11 @@ public sealed class UDPProxyService : BackgroundService
 
     private readonly List<UDPForwarder> forwarders = new ();
 
+    // One Clock For The Score Drain, Both Idle Timeouts And The Unknown-Challenge Grace, So Everything Time-Dependent In The Proxy Measures From The Same Place
+    private readonly TimeProvider timeProvider = TimeProvider.System;
+
     // Shared Across Every Forwarder So A Single Source's Score Is The Same Regardless Of Which Public Port It Sends To; Not "IDisposable" And So Never Disposed Alongside The Forwarders
-    private readonly ViolationScoreContainer scoreContainer = new (TimeProvider.System);
+    private readonly ViolationScoreContainer scoreContainer;
 
     // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
@@ -61,6 +64,8 @@ public sealed class UDPProxyService : BackgroundService
         this.options = options.Value;
         this.ports = ports;
         this.logger = logger;
+
+        scoreContainer = new ViolationScoreContainer(timeProvider);
     }
 
     public bool IsRunning => running;
@@ -149,7 +154,7 @@ public sealed class UDPProxyService : BackgroundService
     {
         try
         {
-            forwarders.Add(new UDPForwarder(publicPort, localPort, kind, ChallengeRenewalInterval, scoreContainer, logger));
+            forwarders.Add(new UDPForwarder(publicPort, localPort, kind, ChallengeRenewalInterval, scoreContainer, timeProvider, logger));
         }
 
         catch (Exception exception)

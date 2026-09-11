@@ -2,7 +2,7 @@
 
 Companion to `2026-09-10-proxy-abuse-protection-design.md`. Everything here was found during that work, judged real, and **deliberately not fixed** in it. Each entry says what it is, what it costs, why it was parked, and what fixing it would take.
 
-Nothing here blocks the abuse protection from being an improvement on the transparent relay it replaced. Item 1 is the only one that is worse than that baseline, and it is the one to read first.
+Two entries here are worse than the transparent relay this replaced, and they are the ones to read first. Item 3 blackholes a legitimate player for the rest of a match whenever two sessions share one public port, which is why it blocks the merge; item 1 lets a spoofed source silence a named player, which the relay had no score to make possible. The opening claim that nothing here blocked the work from being an improvement on that baseline did not survive live verification.
 
 ## Triage
 
@@ -12,7 +12,7 @@ Corrected after live verification. Every item is in one of four containers, and 
 
 **MUST HAVE, BEFORE HOSTILE EXPOSURE — items 1, 2, 8.** The proxy is internet-reachable. Item 2 (no session or connection cap) lets one datagram buy a socket and a task; item 1 (a spoofed source silencing a named player) is the one behaviour worse than the transparent relay this replaced; item 8 (the under-attack indicator's five-minute lag) has to be fixed before anything gates admission on it.
 
-**NICE TO HAVE — items 4, 10, plus one new.** Neither changes behaviour; both change how much the next change can be trusted, and both are `TODO` comments at the code sites they concern. Item 10 — extracting the pipeline out of `UDPForwarder.Run` — is the highest-leverage item here: the pipeline being inline is *why* the blocking defect needed a live client to surface. The new item is a test double modelling the client's challenge storage, which is the specific gap the blocker fell through.
+**NICE TO HAVE — items 4, 10, plus one new. Item 4 is done as of 2026-09-11.** None of the three changes behaviour; each changes how much the next change can be trusted, and item 10 remains a `TODO` at the code site it concerns. Item 10 — extracting the pipeline out of `UDPForwarder.Run` — is the highest-leverage item here: the pipeline being inline is *why* the blocking defect needed a live client to surface. The new item is a test double modelling the client's challenge storage, which is the specific gap the blocker fell through.
 
 **SKIP — items 7, 9, and the challenge expiry.** Declined with reasons in the plan. Item 9 only becomes reachable if the caps are not done; item 7 cannot be done without the netcmd parsing in item 6.
 
@@ -21,13 +21,22 @@ Corrected after live verification. Every item is in one of four containers, and 
 ## Effort, for the record
 
 
-Effort is given in **tasks**, where a task is one focused change with its own tests and its own review — roughly what fits comfortably in one sitting. Nothing here is required before the feature ships.
+Effort is given in **tasks**, where a task is one focused change with its own tests and its own review — roughly what fits comfortably in one sitting.
+
+**These tables were corrected on 2026-09-11 to match the triage above.** They previously filed item 3 as "genuinely optional" and item 5 as "cheap, whenever", and opened by saying nothing here was required before the feature ships. Live testing promoted both to merge blockers, so all three statements were wrong.
+
+**Blocking the merge.**
+
+| | Item | Effort | Notes |
+| --- | --- | --- | --- |
+| 3 | Per-forwarder challenge retention | **1–2 tasks** | The merge blocker. Re-keys the retained challenges and the sequence onto `UDPForwarder` with a per-`(challenge, endpoint)` seen set. The per-session grace stays. |
+| 5 | Make the challenge value random | **Half a task** | Immediately after item 3, which is what makes it meaningful. The blocker was removed during this work. Needs the uniqueness check the `Rotate` precondition already documents. |
 
 **Before this is deliberately exposed to hostile traffic** — the proxy is reachable from the internet, so this is the group that matters if anyone attacks it rather than merely plays against it.
 
 | | Item | Effort | Notes |
 | --- | --- | --- | --- |
-| 2 | Session and connection caps | **1–2 tasks** | Mostly a policy decision: what the caps should be given a configurable instance count. The code is a check before `GetOrCreateSession` plus per-IP counting. |
+| 2 | Session and connection caps | **1–2 tasks** | Mostly a policy decision: what the caps should be given a configurable instance count. The code is a check before `GetOrCreateSession` plus per-IP counting. The lifetime half is already closed by the fifteen-second unauthenticated timeout; only the count caps remain. |
 | 1 | Spoofed source silences a player | **1 session** | Half of it is deciding *which* mitigation; the implementation after that is small. Do not start it as an implementation task. |
 | 8 | Under-attack indicator is stale | **1 task** | Only worth doing as part of item 2, since gating admission on it is the only use that needs it live. |
 
@@ -36,21 +45,16 @@ Effort is given in **tasks**, where a task is one focused change with its own te
 | | Item | Effort | Notes |
 | --- | --- | --- | --- |
 | 10 | Extract the pipeline out of `UDPForwarder.Run` | **1–2 tasks** | Highest leverage item in this document. Several defects on this branch were only reachable through a live loopback socket because the pipeline is inline; extracting it makes them unit-testable. |
-| 4 | Inject a `TimeProvider` into the forwarder | **1 task** | Mechanical. Now worth more than when it was written: the branch has since added a second, also-untested idle timeout. |
+| 4 | Inject a `TimeProvider` into the forwarder | **Done 2026-09-11** | Took the one mechanical task estimated. Six tests added, each proven against a mutation; the grace bound and both idle timeouts are now covered. |
+| — | Model the client's challenge storage in a test double | **1 task** | The specific gap the merge blocker fell through. Nothing in the suite models the client keying challenges by destination and accepting a replacement only on a strictly greater timestamp. |
 
-**Cheap and worth doing whenever.**
-
-| | Item | Effort | Notes |
-| --- | --- | --- | --- |
-| 5 | Make the challenge value random | **Half a task** | The blocker was removed during this work. Needs the uniqueness check the `Rotate` precondition already documents. |
-| 9 | Parallelise the maintenance loop | **1 task** | Only bites under item 2's uncapped condition. Do it after, or not at all. |
+**Deliberately skipped**, with the reasons recorded in Part 4 of the plan so they are not re-argued: item 7 (enforce the game-command quota, which needs item 6's netcmd parsing), item 9 (parallelise the maintenance loop — **1 task**, but item 2's caps remove the condition that makes it reachable), and reducing the challenge expiry.
 
 **Large, and genuinely optional.**
 
 | | Item | Effort | Notes |
 | --- | --- | --- | --- |
-| 6, 7 | Watermark, packet-type and netcmd validation | **Several sessions** | The reference's highest-value anti-cheat signal and the highest false-positive risk in the whole area. Needs `game_data_protocol.h` ported and a region setting COMPEL has no equivalent for. Treat as its own project with its own spec. |
-| 3 | Per-forwarder challenge retention | **1–2 tasks** | Now optional rather than needed: the per-session grace covers the case it would fix. Only worth it as groundwork for item 5 being meaningful. |
+| 6, 7 | Watermark, packet-type and netcmd validation | **Several sessions** | The reference's highest-value anti-cheat signal and the highest false-positive risk in the whole area. Needs a region setting COMPEL has no equivalent for, and ports from two trees: `game_data_protocol.h` beside the reference, and the HON client's `k2_protocol.h` for the packet flags and network commands the reference never defines. Treat as its own project with its own spec. |
 
 ---
 
@@ -81,13 +85,13 @@ Two things make the victim easy to target:
 
 ## 2. Neither sessions nor connections are capped
 
-`GetOrCreateSession` runs before the length guard and before the allowance check, so **one datagram from a novel source endpoint** buys a UDP socket, a pump task with a 65,535-byte buffer, a linked `CancellationTokenSource` and a `SessionChallengeState`, all held for the two-minute idle timeout — and an immediate 58-byte challenge to whatever address it named.
+`GetOrCreateSession` runs before the length guard and before the allowance check, so **one datagram from a novel source endpoint** buys a UDP socket, a pump task with a 65,535-byte buffer, a linked `CancellationTokenSource` and a `SessionChallengeState` — and an immediate 58-byte challenge to whatever address it named.
 
-The reference bounds this three ways COMPEL has none of: `MAX_IDLE_TIME` 15 seconds (`main.cpp:42`), `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP` 10 (`main.cpp:53-56`), and refusing all new connections while its under-attack indicator is over threshold.
+The reference bounds this three ways, of which COMPEL now has one. `MAX_IDLE_TIME` 15 seconds (`main.cpp:42`) is ported as `UnauthenticatedSessionTimeout`, so a session that never authenticates is held for fifteen seconds rather than the two-minute idle timeout — effectively fifteen to twenty-five, since eviction only runs on a rotating pass. What COMPEL still has none of is `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP` 10 (`main.cpp:53-56`), and refusing all new connections while its under-attack indicator is over threshold. A flood fast enough simply outruns the fifteen-second sweep.
 
 **Why parked.** Entirely pre-existing — the session machinery predates this work, and the abuse protection deliberately sits *after* it. Capping needs a policy decision about what the limits should be given COMPEL's configurable instance count, which is a question for the operator rather than a defect to fix.
 
-**What fixing it takes.** A per-forwarder session cap and a per-IP cap, checked before `GetOrCreateSession`, plus a decision on whether to refuse new sessions while `IsUnderAttack` holds. The idle timeout could also be shortened for a session that has never authenticated, which is already tracked.
+**What fixing it takes.** A per-forwarder session cap and a per-IP cap, checked before `GetOrCreateSession`, plus a decision on whether to refuse new sessions while `IsUnderAttack` holds. Shortening the idle timeout for a session that has never authenticated was the remaining part of this and is **done**: that is what `UnauthenticatedSessionTimeout` is.
 
 ---
 
@@ -103,13 +107,17 @@ Task 9 worked around this with a grace: until a session has authenticated, and f
 
 ---
 
-## 4. The unknown-challenge grace has an untested bound
+## 4. The unknown-challenge grace has an untested bound — RESOLVED 2026-09-11
 
-`ClientSession.IsWithinUnknownChallengeGrace` reads `Environment.TickCount64` inline, so the thirty-second bound cannot be reached by a test without actually waiting. Setting `UnknownChallengeGraceMilliseconds` to `long.MaxValue` — removing the only limit on how long a hostile source keeps the 100-weight suppressed — leaves the whole suite green.
+**Fixed.** `UDPForwarder` and `ClientSession` now take a `TimeProvider` and read every clock through it, so the grace's bound and both idle timeouts are reachable by a test. Six tests cover them, each proven to fail against a specific mutation. `UnknownChallengeGrace` moved to `UDPForwarder` as an `internal static readonly TimeSpan`, and the two idle timeouts became `internal`, so a test can cite the real values rather than a copy of them.
 
-**Why parked.** The bound's security value is low: the grace only suppresses a charge on a path that drops the datagram either way, it buys an attacker at most thirty seconds of un-actioned dropping, and rotating source ports is cheaper for an attacker than waiting out a grace. Against that, testing it means injecting a `TimeProvider` into `UDPForwarder` and `ClientSession`, rippling through `UDPProxyService` and every test rig.
+The record of why it mattered, kept because it is the evidence: `ClientSession.IsWithinUnknownChallengeGrace` read `Environment.TickCount64` inline, so the thirty-second bound could not be reached by a test without actually waiting. Setting `UnknownChallengeGraceMilliseconds` to `long.MaxValue` — removing the only limit on how long a hostile source keeps the 100-weight suppressed — left the whole suite green: measured on 2026-09-11 at 139 passed, 0 failed.
 
-**What fixing it takes.** That injection. `ViolationScoreContainer` already takes a `TimeProvider` and `ControllableTimeProvider` already exists in the test project, so the pattern is established — it is purely the constructor churn. Doing so would also make the idle-session timeout testable, which it currently is not.
+**One trap this work turned up, worth carrying forward.** The first version of the grace test advanced the clock by `UnknownChallengeGrace` itself, and so still passed with the grace widened to `TimeSpan.MaxValue` — the advance widened with the constant. A duration that is the thing under test has to be pinned as a literal in its own test; behavioural tests may then read the constant freely. That is now a global constraint in the plan.
+
+**Why it was parked.** The bound's security value was judged low: the grace only suppresses a charge on a path that drops the datagram either way, it buys an attacker at most thirty seconds of un-actioned dropping, and rotating source ports is cheaper for an attacker than waiting out a grace. Against that, testing it meant injecting a `TimeProvider` into `UDPForwarder` and `ClientSession`, rippling through `UDPProxyService` and every test rig. That ripple turned out to be smaller than feared — four call sites and one override.
+
+**What fixing it took.** The injection, as expected: purely constructor churn across `UDPForwarder`, `ClientSession`, `UDPProxyService` and three test construction sites, following the pattern `ViolationScoreContainer` already set. `ControllableTimeProvider` also needed a `GetUtcNow` override, because it had only ever overridden `GetTimestamp` and the challenge timestamp reads the wall clock — without it a moved clock would have left the two out of step. As predicted, it made both idle-session timeouts testable at the same time.
 
 ---
 
@@ -125,13 +133,13 @@ Task 9 worked around this with a grace: until a session has authenticated, and f
 
 ## 6. Watermark, packet-type and netcmd validation
 
-Deferred from the original design, recorded as TODOs in `UDPProxyService`. The reference's constant per-region watermark and dynamic CRC32C watermark are its highest-value anti-cheat signal; adding them needs a region setting COMPEL has no equivalent for, and they carry a higher false-positive cost than any check currently implemented. Packet-type and network-command validity need `game_data_protocol.h` ported.
+Deferred from the original design, recorded as TODOs in `UDPProxyService`. The reference's constant per-region watermark and dynamic CRC32C watermark are its highest-value anti-cheat signal; adding them needs a region setting COMPEL has no equivalent for, and they carry a higher false-positive cost than any check currently implemented. Packet-type and network-command validity need definitions from two trees: `game_data_protocol.h`, which sits beside the reference and holds the `GAME_CMD_*` table, and the HON client's `src/k2/k2_protocol.h`, which holds the `PACKET_*` flags and `NETCMD_*` values that the reference uses but never defines.
 
 ---
 
 ## 7. The game-command quota is advertised but not enforced
 
-`ChallengeQuota.GameCommandForInterval` derives a quota, and the challenge packet advertises it, so a compliant client self-limits to it. Nothing on the proxy side checks it, because the reference enforces it with a second per-challenge counter that only increments for `NETCMD_CLIENT_GAME_DATA` packets carrying order commands (`main.cpp:764`) — which needs the netcmd parsing deferred in item 6.
+`ChallengeQuota.GameCommandForInterval` derives a quota, and the challenge packet advertises it, so a compliant client self-limits to it. Nothing on the proxy side checks it, because the reference enforces it with a second per-challenge counter that only increments for `NETCMD_CLIENT_GAME_DATA` packets carrying order commands, tested against `CHALLENGE_MAX_GAME_CMD_CTR` at `main.cpp:764` — which needs the netcmd parsing deferred in item 6.
 
 Worth knowing that the client's *soft* limiter only watches the total counter, never the game-command counter, so a client that exceeds the game-command quota hits its hard limit with no back-pressure warning. That is the client's behaviour, not something COMPEL can change.
 
@@ -139,9 +147,11 @@ Worth knowing that the client's *soft* limiter only watches the total counter, n
 
 ## 8. The under-attack indicator lags by up to five minutes
 
-`IsUnderAttack` is recomputed only when a five-minute window closes, so a flood is invisible for up to five minutes and the flag stays set for up to five minutes after one ends. It is also a raw count of refused datagrams, where the reference's equivalent is live and weighted and is read **per datagram** to refuse new connections outright.
+`IsUnderAttack` is recomputed only when a five-minute window closes, so a flood is invisible for up to five minutes and the flag stays set for up to five minutes after one ends.
 
-**Why this matters for item 2.** Item 2 suggests refusing new sessions while `IsUnderAttack` holds. Built on this indicator that would gate admission on data up to five minutes stale, and would refuse every new player for five minutes after an attack ended. The indicator has to become live before it can be used as a gate — recorded here so the next person does not discover that after wiring it up.
+**Corrected on 2026-09-11: only the first half of that is a divergence from the reference.** The reference's indicator is reset to zero on its own five-minute housekeeping tick (`main.cpp:1248-1253`), so its flag also stays set for up to five minutes after an attack ends; it is an accumulating counter, not a decaying one. What it does differently is *where it is read*: it both increments and tests per datagram on the new-connection path (`:1714` for game, `:1383` for voice), refusing the datagram outright, so it takes effect the instant the count crosses the threshold. COMPEL's cannot rise until the window closes. It is also weighted, where COMPEL's is a raw count of refused datagrams — and the reference's commonest weight, +1 per datagram from an unknown source, is not a refusal at all, so the two quantities do not measure the same thing.
+
+**Why this matters for item 2.** Item 2 suggests refusing new sessions while `IsUnderAttack` holds. Built on this indicator that would gate admission on data up to five minutes stale. The indicator has to become live before it can be used as a gate — recorded here so the next person does not discover that after wiring it up. Making it *decay* rather than window-reset fixes the stuck-flag half as well, and is an improvement on the reference rather than parity with it.
 
 ---
 
@@ -153,4 +163,4 @@ Worth knowing that the client's *soft* limiter only watches the total counter, n
 
 ## 10. `UDPForwarder` carries the whole pipeline inline
 
-`Run` holds the validation pipeline across roughly a hundred lines of the receive loop, and the class is now around 460 lines mixing socket lifetime, the session table, challenge issuing, validation and drop accounting. The pure pieces were extracted into their own types; the pipeline was not, which is why several defects in it were only reachable through a live loopback socket rather than a unit test. `ClientSession` is a private nested class, so the two flags the repeat and the grace turn on have no direct test surface at all.
+`Run` holds the validation pipeline across roughly a hundred lines of the receive loop, and the class is now 495 lines mixing socket lifetime, the session table, challenge issuing, validation and drop accounting. The pure pieces were extracted into their own types; the pipeline was not, which is why several defects in it were only reachable through a live loopback socket rather than a unit test. `ClientSession` is a private nested class, so the two flags the repeat and the grace turn on have no direct test surface at all.

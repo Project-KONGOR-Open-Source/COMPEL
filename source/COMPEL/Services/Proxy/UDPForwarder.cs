@@ -22,9 +22,14 @@ internal sealed class UDPForwarder : IDisposable
     // No Reference "#define" To Cite: The Reference Bounds Its Own Maps With A Bare Literal Of A Thousand. Reporting Stops At The Bound Rather Than Clearing, Because Clearing Would Un-Throttle Every Source Already Reported And Turn A Flood Into A Log Flood
     private const int ReportedDropLimit = 1000;
 
+    // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
+    // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
+    internal static readonly TimeSpan UnknownChallengeGrace = TimeSpan.FromSeconds(30);
+
     private readonly IPEndPoint serverEndPoint;
     private readonly ProxyForwarderKind kind;
     private readonly ViolationScoreContainer scoreContainer;
+    private readonly TimeProvider timeProvider;
     private readonly ILogger logger;
     private readonly Socket frontSocket;
     private readonly ConcurrentDictionary<IPEndPoint, ClientSession> sessions = new ();
@@ -46,13 +51,14 @@ internal sealed class UDPForwarder : IDisposable
 
     public long DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
 
-    public UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, ILogger logger)
+    public UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, TimeProvider timeProvider, ILogger logger)
     {
         PublicPort = publicPort;
         LocalPort = localPort;
         serverEndPoint = new IPEndPoint(IPAddress.Loopback, localPort);
         this.kind = kind;
         this.scoreContainer = scoreContainer;
+        this.timeProvider = timeProvider;
         this.logger = logger;
 
         // The Interval Is Not Stored: It Is Only Needed To Derive The Two Quotas, Which Are Fixed For The Life Of The Forwarder
@@ -308,7 +314,7 @@ internal sealed class UDPForwarder : IDisposable
             DisableConnectionResetReporting(upstreamSocket);
             upstreamSocket.Connect(serverEndPoint);
 
-            ClientSession session = new (upstreamSocket, stoppingToken);
+            ClientSession session = new (upstreamSocket, stoppingToken, timeProvider);
             sessions[client] = session;
 
             _ = PumpServerToClient(client, session);
@@ -374,7 +380,7 @@ internal sealed class UDPForwarder : IDisposable
 
     public void EvictIdleSessions(TimeSpan idleTimeout, TimeSpan unauthenticatedTimeout)
     {
-        long now = Environment.TickCount64;
+        long now = timeProvider.GetTimestamp();
 
         // Sweep Under The Same Lock That Guards Session Creation So An Idle Session Can Never Be Removed And Disposed While A Datagram For The Same Client Is Concurrently Creating A Replacement, Which Would Otherwise Leak Whichever Session Lost The Race
         lock (sessionsLock)
@@ -382,9 +388,8 @@ internal sealed class UDPForwarder : IDisposable
             foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
             {
                 TimeSpan timeout = pair.Value.HasAuthenticated ? idleTimeout : unauthenticatedTimeout;
-                long cutoff = now - (long)timeout.TotalMilliseconds;
 
-                if (Volatile.Read(ref pair.Value.LastActivityTicks) > cutoff)
+                if (timeProvider.GetElapsedTime(Volatile.Read(ref pair.Value.LastActivityTimestamp), now) < timeout)
                     continue;
 
                 if (sessions.TryRemove(pair.Key, out ClientSession? removed))
@@ -413,9 +418,7 @@ internal sealed class UDPForwarder : IDisposable
         sessions.Clear();
     }
 
-    // TODO: This Class Reads "Environment.TickCount64" And The Wall Clock Directly, So Neither The Unknown-Challenge Grace's Bound Nor Either Idle Timeout Can Be Reached By A Test Without Waiting Out The Real Interval
-    // Injecting A "TimeProvider" As "ViolationScoreContainer" Already Does Would Make All Three Testable, And "ControllableTimeProvider" Already Exists In The Test Project For Exactly This
-    // See "docs/superpowers/specs/2026-09-11-proxy-abuse-protection-follow-up.md", Item 4
+    // Every Clock This Class Reads Comes From The Injected Provider Rather Than "Environment.TickCount64" Or The Wall Clock, Which Is What Lets A Test Reach The Unknown-Challenge Grace's Bound And Both Idle Timeouts Without Waiting Out The Real Interval
     private sealed class ClientSession : IDisposable
     {
         public Socket UpstreamSocket { get; }
@@ -425,15 +428,14 @@ internal sealed class UDPForwarder : IDisposable
         // Rotation And Matching Live In "SessionChallengeState" So The Renewal Grace Is Testable Outside This Private Class
         public SessionChallengeState Challenges { get; } = new ();
 
-        public long LastActivityTicks;
+        // A Provider Timestamp Rather Than Milliseconds, So Only "TimeProvider.GetElapsedTime" Can Interpret It
+        public long LastActivityTimestamp;
 
         public uint IssuedTimestamp;
 
-        // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
-        // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
-        private static readonly long UnknownChallengeGraceMilliseconds = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
+        private readonly TimeProvider timeProvider;
 
-        private readonly long createdTicks = Environment.TickCount64;
+        private readonly long createdTimestamp;
 
         private long lastIssuedTimestamp;
 
@@ -441,10 +443,12 @@ internal sealed class UDPForwarder : IDisposable
 
         private int disposed;
 
-        public ClientSession(Socket upstreamSocket, CancellationToken stoppingToken)
+        public ClientSession(Socket upstreamSocket, CancellationToken stoppingToken, TimeProvider timeProvider)
         {
             UpstreamSocket = upstreamSocket;
             Cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            this.timeProvider = timeProvider;
+            createdTimestamp = timeProvider.GetTimestamp();
 
             Touch();
         }
@@ -452,7 +456,7 @@ internal sealed class UDPForwarder : IDisposable
         public bool HasAuthenticated => Volatile.Read(ref authenticated);
 
         public bool IsWithinUnknownChallengeGrace
-            => HasAuthenticated is false && Environment.TickCount64 - createdTicks < UnknownChallengeGraceMilliseconds;
+            => HasAuthenticated is false && timeProvider.GetElapsedTime(createdTimestamp) < UnknownChallengeGrace;
 
         public void MarkAuthenticated()
         {
@@ -460,7 +464,7 @@ internal sealed class UDPForwarder : IDisposable
                 Volatile.Write(ref authenticated, true);
         }
 
-        public void Touch() => Volatile.Write(ref LastActivityTicks, Environment.TickCount64);
+        public void Touch() => Volatile.Write(ref LastActivityTimestamp, timeProvider.GetTimestamp());
 
         /// <summary>
         ///     The timestamp to stamp into a newly issued challenge: the wall clock, floored so it never repeats or decreases for this session.
@@ -468,7 +472,7 @@ internal sealed class UDPForwarder : IDisposable
         /// </summary>
         public uint NextIssuedTimestamp()
         {
-            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long now = timeProvider.GetUtcNow().ToUnixTimeSeconds();
             long monotonic = Math.Max(Interlocked.Read(ref lastIssuedTimestamp) + 1, now);
 
             Interlocked.Exchange(ref lastIssuedTimestamp, monotonic);
