@@ -85,21 +85,22 @@ public static class ControlPlaneEndpoints
         {
             supervisor.RequestStart();
 
-            return TypedResults.Ok(new ActionResponse("start", true, "Start Requested"));
+            return TypedResults.Ok(new ActionResponse("instances/start", true, "Instances Start Requested"));
         });
 
         management.MapPost("/instances/stop", (MatchServerManagerSupervisor supervisor) =>
         {
             supervisor.RequestStop();
 
-            return TypedResults.Ok(new ActionResponse("stop", true, "Stop Requested"));
+            return TypedResults.Ok(new ActionResponse("instances/stop", true, "Instances Stop Requested"));
         });
 
         management.MapPost("/instances/restart", async (MatchServerManagerSupervisor supervisor, CancellationToken cancellationToken) =>
         {
             await supervisor.RequestRestart(cancellationToken);
 
-            return TypedResults.Ok(new ActionResponse("restart", true, "Restart Requested"));
+            return TypedResults.Ok(new ActionResponse("instances/restart", true, "Instances Restart Requested"));
+        });
 
         management.MapPost("/proxy/restart", async Task<IResult> (UDPProxyService proxy, CancellationToken cancellationToken) =>
         {
