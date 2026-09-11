@@ -51,7 +51,7 @@ Task 9 worked around this with a grace: until a session has authenticated, and f
 
 **Why parked.** It re-keys three types (`ChallengeWindow`, `SessionChallengeState`, and the forwarder's use of both), and Task 9 was the merge blocker.
 
-**What fixing it takes.** Move the retained challenge values to `UDPForwarder`, keep a per-`(challenge, endpoint)` seen set, and evict a challenge's whole set when the challenge ages out — which is what the reference does. It removes the need for the grace entirely, and makes the challenge value shared across sessions, which is what would make randomising it worthwhile.
+**What fixing it takes.** Move the retained challenge values to `UDPForwarder`, keep a per-`(challenge, endpoint)` seen set, and evict a challenge's whole set when the challenge ages out — which is what the reference does. It makes the challenge value shared across sessions, which is what would make randomising it worthwhile. The per-session grace **stays** either way: it is working, it is tested, and replacing it with a re-keying refactor would be churn for its own sake. Treat global retention as an improvement layered on top, not as a reason to remove the grace.
 
 ---
 
