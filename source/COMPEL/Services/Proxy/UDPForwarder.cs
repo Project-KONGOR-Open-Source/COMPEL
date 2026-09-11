@@ -34,6 +34,7 @@ internal sealed class UDPForwarder : IDisposable
     private readonly Socket frontSocket;
     private readonly ConcurrentDictionary<IPEndPoint, ClientSession> sessions = new ();
     private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = new ();
+    private readonly SessionChallengeState challenges = new ();
     private readonly Lock sessionsLock = new ();
 
     // The Sequence Behind Each Issued Challenge Value, Which Must Differ From The Previous One The Client Was Sent; The Timestamp Is Not Derived From It And Comes From The Clock Instead
@@ -143,13 +144,12 @@ internal sealed class UDPForwarder : IDisposable
                 continue;
             }
 
-            ChallengeWindow? window = session.Challenges.Match(challenge);
+            ChallengeWindow? window = challenges.Match(challenge, client);
 
             // A Non-Zero Challenge This Session Never Issued Or No Longer Retains. The Reference Treats This Separately From A Client That Has Not Been Challenged Yet, Which Echoes Zero And Matches The Session's Unauthenticated Window
             if (window is null)
             {
                 // Refused Either Way, So This Is Not A Relay Path; What The Grace Suppresses Is Only The Violation Weight, Which At Ordinary Game Rates Would Cross The Threshold In Well Under A Second
-                // TODO: The Reference Keys Its Retained Challenges On The Challenge Value Globally With A Per-Address Inner Map, So A Client Whose Source Port Changes Is Matched Immediately And Never Refused At All; Holding Them Per Forwarder Rather Than Per Session Would Remove The Need For This Grace
                 if (session.IsWithinUnknownChallengeGrace)
                     Drop(client, "Unknown Challenge Within Grace");
 
@@ -195,8 +195,16 @@ internal sealed class UDPForwarder : IDisposable
     /// </summary>
     public void RotateChallenges()
     {
+        uint sequence = NextChallengeSequence();
+        challenges.Rotate(sequence, packetQuota);
+
+        uint issuedTimestamp = (uint)timeProvider.GetUtcNow().ToUnixTimeSeconds();
+
         foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
-            SendChallenge(pair.Key, pair.Value);
+        {
+            Volatile.Write(ref pair.Value.IssuedTimestamp, issuedTimestamp);
+            TransmitChallenge(pair.Key, sequence, issuedTimestamp);
+        }
     }
 
     /// <summary>
@@ -206,27 +214,39 @@ internal sealed class UDPForwarder : IDisposable
     /// </summary>
     public void RepeatChallenges()
     {
-        foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
-            if (pair.Value.Challenges.Current is ChallengeWindow current)
-                TransmitChallenge(pair.Key, current.Challenge, Volatile.Read(ref pair.Value.IssuedTimestamp));
+        if (challenges.CurrentChallenge is uint current)
+        {
+            foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+                TransmitChallenge(pair.Key, current, Volatile.Read(ref pair.Value.IssuedTimestamp));
+        }
     }
 
     private void SendChallenge(IPEndPoint client, ClientSession session)
     {
-        uint sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+        uint? current = challenges.CurrentChallenge;
 
-        // The Value Must Be Non-Zero, As Zero Marks An Unauthenticated Session On The Client; Skip It On The Rare Wrap-Around
-        if (sequence is 0)
-            sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
-
-        // Rotation Must Happen Before The Challenge Is Sent, So A Reply Arriving The Instant After Send Is Already Matched
-        session.Challenges.Rotate(sequence, packetQuota);
+        if (current is null)
+        {
+            uint sequence = NextChallengeSequence();
+            challenges.Rotate(sequence, packetQuota);
+            current = sequence;
+        }
 
         uint issuedTimestamp = session.NextIssuedTimestamp();
 
         Volatile.Write(ref session.IssuedTimestamp, issuedTimestamp);
 
-        TransmitChallenge(client, sequence, issuedTimestamp);
+        TransmitChallenge(client, current.Value, issuedTimestamp);
+    }
+
+    private uint NextChallengeSequence()
+    {
+        uint sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+
+        if (sequence is 0)
+            sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+
+        return sequence;
     }
 
     private void TransmitChallenge(IPEndPoint client, uint challenge, uint serverCreationTimestamp)
@@ -424,9 +444,6 @@ internal sealed class UDPForwarder : IDisposable
         public Socket UpstreamSocket { get; }
 
         public CancellationTokenSource Cancellation { get; }
-
-        // Rotation And Matching Live In "SessionChallengeState" So The Renewal Grace Is Testable Outside This Private Class
-        public SessionChallengeState Challenges { get; } = new ();
 
         // A Provider Timestamp Rather Than Milliseconds, So Only "TimeProvider.GetElapsedTime" Can Interpret It
         public long LastActivityTimestamp;
