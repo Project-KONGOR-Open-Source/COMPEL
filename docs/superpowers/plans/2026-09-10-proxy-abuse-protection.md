@@ -3197,12 +3197,12 @@ And in `ChallengeQuotaTests.cs`, the relationship the whole no-false-positive gu
     }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
 Expected: the drift test fails (the timestamp is far ahead of the clock) and the repeat test fails (the gate skips the session). The quota test should **pass** — it asserts a relationship that currently holds, and exists to stop it being broken later. Say so if it does not.
 
-- [ ] **Step 4: Hold the timestamp floor per session and advance it only on a new value**
+- [x] **Step 4: Hold the timestamp floor per session and advance it only on a new value**
 
 Move the field from `UDPForwarder` to `ClientSession`, and keep the issued timestamp so a repeat can reuse it:
 
@@ -3255,7 +3255,7 @@ Move the field from `UDPForwarder` to `ClientSession`, and keep the issued times
 
 Remove the forwarder-level `lastIssuedTimestamp` entirely.
 
-- [ ] **Step 5: Repeat to every session, and bound it with the reference's idle timeout instead**
+- [x] **Step 5: Repeat to every session, and bound it with the reference's idle timeout instead**
 
 Remove the `HasAuthenticated` gate from `RepeatChallenges` — the code above already omits it. Then bound the cost the way the reference does.
 
@@ -3283,7 +3283,7 @@ And move `session.Touch()` out of the pre-validation path to immediately before 
             try { await session.UpstreamSocket.SendAsync(...
 ```
 
-- [ ] **Step 6: Stop leaking drop-report slots**
+- [x] **Step 6: Stop leaking drop-report slots**
 
 Decrement wherever a report entry is dropped, not only in the idle sweep. In `PumpServerToClient`'s `finally`, beside the session removal, and on the session-creation-failure path do not consume a slot at all — pass the reason through the unweighted `Drop` **after** the session exists, or accept the entry and release it there. The simplest correct shape is a small helper both removal sites call:
 
@@ -3297,18 +3297,18 @@ Decrement wherever a report entry is dropped, not only in the idle sweep. In `Pu
 
 Call it from `EvictIdleSessions` in place of the inline removal, and from `PumpServerToClient`'s `finally`.
 
-- [ ] **Step 7: Correct the reference-rate comments**
+- [x] **Step 7: Correct the reference-rate comments**
 
 `ChallengeQuota`'s three rate comments attribute their values to a five-second refresh. The reference's effective refresh is six passes, so its effective rates are 120, 6.7 and 8.3 a second rather than 144, 8 and 10. Say that the constants are the reference's advertised ceilings over its nominal refresh, note the effective figures, and note that COMPEL's own margin against the drain is consequently narrower than the reference's — which is what the new quota test pins. Do **not** change any rate value.
 
 Also correct `SessionChallengeState`'s "against the reference's thirty seconds", which is about thirty-six on the same arithmetic.
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
 Expected: build succeeds with 0 warnings; every test passes.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add source/COMPEL/Services/Proxy source/COMPEL.Tests/Services/Proxy
@@ -3319,13 +3319,14 @@ git commit -m "Stop The Challenge Timestamp Drifting And Repeat To Every Session
 
 ## Final Verification
 
-- [ ] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
-- [ ] `dotnet test source/COMPEL.slnx` passes with no failures. Tasks 7 and 8 replace seven tests that asserted behaviour they deliberately remove, so the useful check is the suite total: it stood at 78 before Task 1 and should end at no fewer than 125.
-- [ ] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
-- [ ] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
-- [ ] COMPEL is restarted while a client is connected, and the client keeps playing: the replacement challenge carries a strictly greater timestamp, so the client accepts it rather than echoing one the proxy no longer knows.
-- [ ] That restart check is run **after** a match has been in progress for several minutes, not immediately after start-up. The timestamp drift this catches only appears once many challenges have been transmitted, which is why a fresh-forwarder test could not see it.
-- [ ] An actioned source sending at an ordinary game rate recovers rather than staying refused, because the proxy drops locally instead of blocking the traffic.
-- [ ] A challenge the proxy never issued is refused rather than admitted under the unauthenticated allowance.
-- [ ] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
-- [ ] Every new constant carries the reference `#define` name in a trailing comment.
+- [x] `dotnet build source/COMPEL.slnx` succeeds with 0 warnings.
+- [x] `dotnet test source/COMPEL.slnx` passes with no failures. Tasks 7 and 8 replace seven tests that asserted behaviour they deliberately remove, so the useful check is the suite total: it stood at 78 before Task 1 and should end at no fewer than 125.
+- [x] `scripts/Publish-Native-AOT-Release.ps1` succeeds with no trim or AOT warnings.
+- [x] A real match through the proxy shows `Disconnects(0)`, a drop count of zero, and `proxyIsUnderAttack` false.
+- [x] COMPEL is restarted while a client is connected, and the client keeps playing: the replacement challenge carries a strictly greater timestamp, so the client accepts it rather than echoing one the proxy no longer knows.
+- [x] That restart check is run **after** a match has been in progress for several minutes, not immediately after start-up. The timestamp drift this catches only appears once many challenges have been transmitted, which is why a fresh-forwarder test could not see it.
+- [x] An actioned source sending at an ordinary game rate recovers rather than staying refused, because the proxy drops locally instead of blocking the traffic.
+- [x] A challenge the proxy never issued is refused rather than admitted under the unauthenticated allowance.
+- [x] No file uses `var`, an abbreviation, American spelling, or the null-forgiving operator.
+- [x] Every new constant carries the reference `#define` name in a trailing comment.
+```
