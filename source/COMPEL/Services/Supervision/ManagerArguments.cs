@@ -6,7 +6,7 @@ namespace COMPEL.Services.Supervision;
 public static class ManagerArguments
 {
     /// <summary>
-    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port".
+    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-mod", "base;game;server".
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
     public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort)
@@ -67,7 +67,10 @@ public static class ManagerArguments
             "-manager",
             "-noconfig",
             "-execute", '"' + execute + '"',
-            "-masterserver", masterServerHostAndPort
+            "-masterserver", masterServerHostAndPort,
+
+            // Directs The Manager To Write User Artefacts Beneath The "server" Subdirectory Rather Than The Game Client Default
+            "-mod", "base;game;server"
         ];
     }
 
