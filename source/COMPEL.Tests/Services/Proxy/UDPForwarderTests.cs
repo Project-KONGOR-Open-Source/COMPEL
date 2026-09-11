@@ -186,6 +186,26 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Refuses(GameDatagram(challenge, quota))).IsTrue();
     }
 
+    // The Enforced Quota Comes From A Field And The Advertised One From The Wire, So A Shared Derivation Does Not Protect The Encoding: Transposing These Two Writes Would Silently Hold A Client To The Game-Command Quota For All Its Traffic
+    [Test]
+    public async Task The_Advertised_Quotas_Match_What_Is_Enforced()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        byte[] challenge = await ReadOneChallengePacket(probe.Forwarder, probe.Client);
+
+        ushort expectedPacketQuota = ChallengeQuota.ForKind(ProxyForwarderKind.Game, TimeSpan.FromSeconds(10));
+        ushort expectedGameCommandQuota = ChallengeQuota.GameCommandForInterval(TimeSpan.FromSeconds(10));
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(ChallengePacketQuota(challenge)).IsEqualTo(expectedPacketQuota);
+            await Assert.That(ChallengeGameCommandQuota(challenge)).IsEqualTo(expectedGameCommandQuota);
+        }
+    }
+
     // A Challenge The Proxy Never Issued Is Refused Whether Or Not The Session Is Still Within Its Grace; What The Grace Changes Is The Charge, Which The Two Grace Tests Cover
     [Test]
     public async Task A_Challenge_The_Proxy_Never_Issued_Is_Dropped()
@@ -248,10 +268,12 @@ public sealed class UDPForwarderTests
     {
         await using ForwarderProbe probe = new ();
 
-        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
-
         uint before = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        await Assert.That(await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0))).IsTrue();
+
         uint timestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+
         uint after = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         using (Assert.Multiple())
@@ -268,6 +290,9 @@ public sealed class UDPForwarderTests
         await using ForwarderProbe probe = new ();
 
         uint issued = await probe.Establish();
+
+        // The Repeat Is Now Gated To An Authenticated Session, So The Probe Must Accept The Issued Challenge Before "RepeatChallenges" Sends Anything For It
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
 
         await DrainUntilIdle(probe.Client);
 
@@ -326,14 +351,18 @@ public sealed class UDPForwarderTests
 
     private static uint ChallengeTimestamp(byte[] datagram) => BinaryPrimitives.ReadUInt32LittleEndian(datagram.AsSpan(40 + 4));
 
-    private static async Task<uint> ReadOneChallengeValue(UDPForwarder forwarder, Socket client)
+    private static ushort ChallengePacketQuota(byte[] datagram) => BinaryPrimitives.ReadUInt16LittleEndian(datagram.AsSpan(40 + 10));
+
+    private static ushort ChallengeGameCommandQuota(byte[] datagram) => BinaryPrimitives.ReadUInt16LittleEndian(datagram.AsSpan(40 + 12));
+
+    private static async Task<byte[]> ReadOneChallengePacket(UDPForwarder forwarder, Socket client)
     {
         for (int attempt = 0; attempt < 10; attempt++)
         {
             (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(client);
 
             if (datagram is not null && IsChallenge(datagram.Value.Payload))
-                return ChallengeValue(datagram.Value.Payload);
+                return datagram.Value.Payload;
 
             // Nothing Usable Arrived (Idle Timeout Or A Dropped Challenge); Re-Issue And Try Again
             forwarder.RotateChallenges();
@@ -342,20 +371,11 @@ public sealed class UDPForwarderTests
         throw new InvalidOperationException("No Challenge Packet Was Received");
     }
 
+    private static async Task<uint> ReadOneChallengeValue(UDPForwarder forwarder, Socket client)
+        => ChallengeValue(await ReadOneChallengePacket(forwarder, client));
+
     private static async Task<uint> ReadOneChallengeTimestamp(UDPForwarder forwarder, Socket client)
-    {
-        for (int attempt = 0; attempt < 10; attempt++)
-        {
-            (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(client);
-
-            if (datagram is not null && IsChallenge(datagram.Value.Payload))
-                return ChallengeTimestamp(datagram.Value.Payload);
-
-            forwarder.RotateChallenges();
-        }
-
-        throw new InvalidOperationException("No Challenge Packet Was Received");
-    }
+        => ChallengeTimestamp(await ReadOneChallengePacket(forwarder, client));
 
     private static async Task DrainUntilIdle(Socket socket)
     {
@@ -459,7 +479,7 @@ public sealed class UDPForwarderTests
         /// </summary>
         internal async Task<bool> Refuses(byte[] datagram)
         {
-            int refusedBefore = Forwarder.DroppedDatagramCount;
+            long refusedBefore = Forwarder.DroppedDatagramCount;
 
             bool relayed = await Relays(datagram);
 

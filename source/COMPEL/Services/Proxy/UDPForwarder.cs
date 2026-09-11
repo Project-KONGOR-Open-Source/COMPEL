@@ -19,7 +19,7 @@ internal sealed class UDPForwarder : IDisposable
     // The Window (Seconds) The Client Treats Itself As Authenticated After A Challenge
     private const ushort ChallengeExpirySeconds = 60;
 
-    // The Reference Clears Its Equivalent Maps Wholesale Once They Pass A Thousand Entries Rather Than Retaining One Per Endpoint For The Life Of The Process
+    // No Reference "#define" To Cite: The Reference Bounds Its Own Maps With A Bare Literal Of A Thousand. Reporting Stops At The Bound Rather Than Clearing, Because Clearing Would Un-Throttle Every Source Already Reported And Turn A Flood Into A Log Flood
     private const int ReportedDropLimit = 1000;
 
     private readonly IPEndPoint serverEndPoint;
@@ -31,19 +31,22 @@ internal sealed class UDPForwarder : IDisposable
     private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = new ();
     private readonly Lock sessionsLock = new ();
 
-    // The Client Accepts A Renewed Challenge Only When Its Value Differs From The Previous One And Its Timestamp Is Strictly Greater, So A Single Monotonically-Increasing Sequence Drives Both Fields
+    // The Sequence Behind Each Issued Challenge Value, Which Must Differ From The Previous One The Client Was Sent; The Timestamp Is Not Derived From It And Comes From The Clock Instead
     private long challengeSequence;
+
+    private long lastIssuedTimestamp;
 
     private readonly ushort packetQuota;
     private readonly ushort gameCommandQuota;
 
-    private int droppedDatagramCount;
+    private long droppedDatagramCount;
+    private int reportedDropCount;
 
     public int PublicPort { get; }
 
     public int LocalPort { get; }
 
-    public int DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
+    public long DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
 
     public UDPForwarder(int publicPort, int localPort, ProxyForwarderKind kind, TimeSpan challengeRenewalInterval, ViolationScoreContainer scoreContainer, ILogger logger)
     {
@@ -196,8 +199,16 @@ internal sealed class UDPForwarder : IDisposable
     public void RepeatChallenges()
     {
         foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+        {
+            // Only A Session That Has Authenticated Needs This: The Repeat Exists For A Client That Lost A Rotation Challenge Mid-Window, Which Is Authenticated By Definition
+            // Repeating To Every Session Instead Turns One Spoofed Datagram Into A Challenge Every Second Aimed At Whatever Address It Named, For As Long As The Session Lives
+            // TODO: The Session Table Itself Has No Cap, So A Spoofed-Source Flood Still Buys A Socket, A Pump Task And A Two-Minute Lifetime Per Datagram; The Reference Bounds This With "MAX_GAME_CONNECTIONS" And "MAX_GAME_CONNECTIONS_PER_IP", Which COMPEL Would Need A Policy For
+            if (pair.Value.HasAuthenticated is false)
+                continue;
+
             if (pair.Value.Challenges.Current is ChallengeWindow current)
                 TransmitChallenge(pair.Key, current.Challenge);
+        }
     }
 
     private void SendChallenge(IPEndPoint client, ClientSession session)
@@ -216,11 +227,14 @@ internal sealed class UDPForwarder : IDisposable
 
     private void TransmitChallenge(IPEndPoint client, uint challenge)
     {
-        // The Client Accepts A Replacement Challenge Only When This Timestamp Is Strictly Greater Than The One It Holds, And It Keys What It Holds On Our Public Port, Which A COMPEL Restart Does Not Change
-        // So This Cannot Be The Challenge Counter: That Restarts At Zero On Every Run, And A Restarted COMPEL Would Issue Timestamps A Connected Client Rejects As Old, Leaving It Echoing A Challenge This Proxy No Longer Knows
-        uint serverCreationTimestamp = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // The Client's Gate Is A Strict Comparison It Never Re-Bases, So A Clock That Steps Backwards Would Have It Reject Every Replacement Until The Clock Caught Up
+        // Never Issuing A Timestamp Below The Last One Keeps The Sequence Monotonic Across A Backwards Step While Still Being Wall-Clock Derived, So A Restart Still Issues A Greater Value Than A Previous Run
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        long monotonic = Math.Max(Interlocked.Read(ref lastIssuedTimestamp) + 1, now);
 
-        byte[] packet = BuildChallengePacket(serverCreationTimestamp, challenge);
+        Interlocked.Exchange(ref lastIssuedTimestamp, monotonic);
+
+        byte[] packet = BuildChallengePacket((uint)monotonic, challenge);
 
         // The Challenge Must Originate From This (Front) Socket So Its Source Address And Port Match The Endpoint The Client Sends Its Game Traffic To, Which Is How The Client Keys The Authenticated Session
         try { frontSocket.SendTo(packet, SocketFlags.None, client); }
@@ -263,11 +277,10 @@ internal sealed class UDPForwarder : IDisposable
     {
         Interlocked.Increment(ref droppedDatagramCount);
 
-        if (reportedDrops.TryAdd(client, true) is false)
+        if (Volatile.Read(ref reportedDropCount) >= ReportedDropLimit || reportedDrops.TryAdd(client, true) is false)
             return false;
 
-        if (reportedDrops.Count > ReportedDropLimit)
-            reportedDrops.Clear();
+        Interlocked.Increment(ref reportedDropCount);
 
         logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
 
@@ -372,7 +385,8 @@ internal sealed class UDPForwarder : IDisposable
                 {
                     removed.Dispose();
 
-                    reportedDrops.TryRemove(pair.Key, out _);
+                    if (reportedDrops.TryRemove(pair.Key, out _))
+                        Interlocked.Decrement(ref reportedDropCount);
                 }
             }
         }
@@ -417,8 +431,10 @@ internal sealed class UDPForwarder : IDisposable
             Touch();
         }
 
+        public bool HasAuthenticated => Volatile.Read(ref authenticated);
+
         public bool IsWithinUnknownChallengeGrace
-            => Volatile.Read(ref authenticated) is false && Environment.TickCount64 - createdTicks < UnknownChallengeGraceMilliseconds;
+            => HasAuthenticated is false && Environment.TickCount64 - createdTicks < UnknownChallengeGraceMilliseconds;
 
         public void MarkAuthenticated()
         {
