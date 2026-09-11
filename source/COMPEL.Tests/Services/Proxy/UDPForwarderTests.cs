@@ -550,6 +550,121 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Relays(GameDatagram(challenge2, counter: 10))).IsTrue();
     }
 
+    [Test]
+    public async Task A_Forwarder_At_Its_Total_Session_Cap_Refuses_A_Novel_Session()
+    {
+        await using ForwarderProbe probe = new ();
+
+        List<Socket> clients = new ();
+        try
+        {
+            for (int ipIndex = 1; ipIndex <= 3; ipIndex++)
+            {
+                IPAddress ipAddress = IPAddress.Parse($"127.0.0.{ipIndex}");
+
+                for (int sessionIndex = 0; sessionIndex < 8; sessionIndex++)
+                {
+                    Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                    clientSocket.Bind(new IPEndPoint(ipAddress, 0));
+                    clients.Add(clientSocket);
+
+                    byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
+                    await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
+                }
+            }
+
+            using Socket client25 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            client25.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.4"), 0));
+
+            byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+
+            await Assert.That(await probe.RefusesFrom(client25, overflowDatagram)).IsTrue();
+        }
+        finally
+        {
+            foreach (Socket clientSocket in clients)
+                clientSocket.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task A_Forwarder_At_Its_Per_Address_Session_Cap_Refuses_A_Novel_Session_From_That_Address_While_Admitting_Another_Address()
+    {
+        await using ForwarderProbe probe = new ();
+
+        List<Socket> clients = new ();
+        try
+        {
+            IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
+
+            for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+            {
+                Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
+                clients.Add(clientSocket);
+
+                byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
+                await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
+            }
+
+            using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            client11.Bind(new IPEndPoint(ipAddress1, 0));
+
+            byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+            await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
+
+            using Socket clientOtherIp = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            clientOtherIp.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0));
+
+            byte[] otherIpDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+            await Assert.That(await probe.RelaysFrom(clientOtherIp, otherIpDatagram)).IsTrue();
+        }
+        finally
+        {
+            foreach (Socket clientSocket in clients)
+                clientSocket.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task An_Evicted_Session_Releases_Its_Session_Slot()
+    {
+        ControllableTimeProvider clock = new ();
+        await using ForwarderProbe probe = new (clock);
+
+        List<Socket> clients = new ();
+        try
+        {
+            IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
+
+            for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+            {
+                Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
+                clients.Add(clientSocket);
+
+                byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
+                await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
+            }
+
+            using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            client11.Bind(new IPEndPoint(ipAddress1, 0));
+
+            byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+            await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
+
+            clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout);
+            probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
+
+            await Assert.That(await probe.RelaysFrom(client11, overflowDatagram)).IsTrue();
+        }
+        finally
+        {
+            foreach (Socket clientSocket in clients)
+                clientSocket.Dispose();
+        }
+    }
+
     private static bool IsChallenge(byte[] datagram)
         => datagram.Length >= 58 && datagram[40] is 0xFF && datagram[41] is 0xFF && (datagram[42] & 0x40) is not 0 && datagram[43] is 0x00;
 
@@ -676,25 +791,22 @@ public sealed class UDPForwarderTests
 
         internal IPEndPoint ClientEndPoint => client.LocalEndPoint is IPEndPoint boundClient ? boundClient : throw new InvalidOperationException("Could Not Determine The Client Endpoint");
 
-        /// <summary>
-        ///     Sends the datagram and reports whether it reached the server.
-        /// </summary>
-        internal async Task<bool> Relays(byte[] datagram)
+        internal async Task<bool> Relays(byte[] datagram) => await RelaysFrom(client, datagram);
+
+        internal async Task<bool> RelaysFrom(Socket senderSocket, byte[] datagram)
         {
-            await client.SendToAsync(datagram, SocketFlags.None, publicEndPoint);
+            await senderSocket.SendToAsync(datagram, SocketFlags.None, publicEndPoint);
 
             return await TryReceive(server) is not null;
         }
 
-        /// <summary>
-        ///     Sends the datagram and reports whether the forwarder refused it: that it did not reach the server, and that the forwarder counted a refusal.
-        ///     Both halves matter, because a receive timeout on its own is also what a dead receive loop looks like.
-        /// </summary>
-        internal async Task<bool> Refuses(byte[] datagram)
+        internal async Task<bool> Refuses(byte[] datagram) => await RefusesFrom(client, datagram);
+
+        internal async Task<bool> RefusesFrom(Socket senderSocket, byte[] datagram)
         {
             long refusedBefore = Forwarder.DroppedDatagramCount;
 
-            bool relayed = await Relays(datagram);
+            bool relayed = await RelaysFrom(senderSocket, datagram);
 
             return relayed is false && Forwarder.DroppedDatagramCount > refusedBefore;
         }
