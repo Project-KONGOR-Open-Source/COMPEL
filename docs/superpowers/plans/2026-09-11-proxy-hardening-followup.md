@@ -61,17 +61,17 @@
 - Consumes: `AttackIndicatorContainer.UnderAttackThreshold`
 - Removes unused: `UDPProxyService.UnderAttackThreshold`, `UDPProxyService.UnderAttackWindowPasses`
 
-- [ ] **Step 1: Remove stale TODO comments**
+- [x] **Step 1: Remove stale TODO comments**
   Remove lines 5–9 and line 21 in `UDPProxyService.cs` which refer to completed items (random challenges, session caps, spoofed source abuse, and the deleted hostile traffic plan).
 
-- [ ] **Step 2: Remove unused dead constants**
+- [x] **Step 2: Remove unused dead constants**
   Remove `private const int UnderAttackThreshold = 1000;` and `internal static readonly int UnderAttackWindowPasses = ...;` from `UDPProxyService.cs`.
 
-- [ ] **Step 3: Run build and test suite**
+- [x] **Step 3: Run build and test suite**
   Run: `dotnet build source/COMPEL.slnx`
   Expected: Succeeded with 0 warnings.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   ```bash
   git add source/COMPEL/Services/Proxy/UDPProxyService.cs
   git commit -m "Clean Up Stale TODO Comments And Unused Attack Constants"
