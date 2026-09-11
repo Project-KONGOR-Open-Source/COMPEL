@@ -2465,6 +2465,8 @@ Four changes fix that, and they matter more than the tests they replace.
 
 **Something must observe that the forwarder charges the container**, or the escalation model is untested end to end. In `A_Challenge_The_Proxy_Never_Issued_Is_Dropped`, capture `probe.Scores.Score(probe.ClientEndPoint)` before the refusal and assert it rose by at least `ViolationScoreContainer.ChallengeViolationWeight` after.
 
+Task 9 later moves that charge assertion out of this test into two of its own, one per unknown-challenge grace state, and returns this test to asserting the refusal alone. Once a session can be within a grace the charge depends on state this test should not care about, whereas the refusal holds either way. Read the two together rather than as a contradiction.
+
 **And one test must pin the order.** A valid datagram cannot do it, because it is refused with the allowance check in any of three positions. A *short* datagram from an actioned source can, because the two candidate orderings charge it differently:
 
 ```csharp
