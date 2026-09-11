@@ -15,10 +15,10 @@ public sealed class UDPProxyServiceTests
     }
 
     [Test]
-    public async Task The_Under_Attack_Window_Is_Five_Minutes()
+    public async Task The_Under_Attack_Threshold_Is_One_Thousand()
     {
-        TimeSpan window = UDPProxyService.MaintenanceInterval * UDPProxyService.UnderAttackWindowPasses;
+        int threshold = AttackIndicatorContainer.UnderAttackThreshold;
 
-        await Assert.That(window).IsEqualTo(TimeSpan.FromMinutes(5));
+        await Assert.That(threshold).IsEqualTo(1000);
     }
 }

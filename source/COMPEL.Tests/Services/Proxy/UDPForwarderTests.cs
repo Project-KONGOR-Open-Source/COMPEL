@@ -20,8 +20,9 @@ public sealed class UDPForwarderTests
         server.Bind(new IPEndPoint(IPAddress.Loopback, localPort));
 
         ViolationScoreContainer container = new (TimeProvider.System);
+        AttackIndicatorContainer attackIndicator = new (TimeProvider.System);
 
-        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, TimeProvider.System, NullLogger.Instance);
+        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, attackIndicator, TimeProvider.System, NullLogger.Instance);
 
         using CancellationTokenSource lifetime = new ();
         Task run = forwarder.Run(lifetime.Token);
@@ -102,8 +103,9 @@ public sealed class UDPForwarderTests
         int localPort = FreeUDPPort();
 
         ViolationScoreContainer container = new (TimeProvider.System);
+        AttackIndicatorContainer attackIndicator = new (TimeProvider.System);
 
-        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, TimeProvider.System, NullLogger.Instance);
+        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, attackIndicator, TimeProvider.System, NullLogger.Instance);
 
         using CancellationTokenSource lifetime = new ();
         Task run = forwarder.Run(lifetime.Token);
@@ -665,6 +667,34 @@ public sealed class UDPForwarderTests
         }
     }
 
+    [Test]
+    public async Task When_The_Under_Attack_Indicator_Is_Active_A_Novel_Session_Is_Refused()
+    {
+        await using ForwarderProbe probe = new ();
+
+        probe.AttackIndicator.Charge(AttackIndicatorContainer.UnderAttackThreshold + 100);
+
+        using Socket newClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        newClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+        byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+
+        await Assert.That(await probe.RefusesFrom(newClient, datagram)).IsTrue();
+    }
+
+    [Test]
+    public async Task When_The_Under_Attack_Indicator_Is_Active_An_Existing_Session_Continues_To_Relay()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint challenge = await probe.Establish();
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
+
+        probe.AttackIndicator.Charge(AttackIndicatorContainer.UnderAttackThreshold + 100);
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsTrue();
+    }
+
     private static bool IsChallenge(byte[] datagram)
         => datagram.Length >= 58 && datagram[40] is 0xFF && datagram[41] is 0xFF && (datagram[42] & 0x40) is not 0 && datagram[43] is 0x00;
 
@@ -771,7 +801,8 @@ public sealed class UDPForwarderTests
             int localPort = server.LocalEndPoint is IPEndPoint boundServer ? boundServer.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
 
             Scores = new ViolationScoreContainer(clock);
-            Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, clock, NullLogger.Instance);
+            AttackIndicator = new AttackIndicatorContainer(clock);
+            Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, AttackIndicator, clock, NullLogger.Instance);
 
             run = Forwarder.Run(lifetime.Token);
 
@@ -784,6 +815,8 @@ public sealed class UDPForwarderTests
         internal UDPForwarder Forwarder { get; }
 
         internal ViolationScoreContainer Scores { get; }
+
+        internal AttackIndicatorContainer AttackIndicator { get; }
 
         internal Socket Server => server;
 
