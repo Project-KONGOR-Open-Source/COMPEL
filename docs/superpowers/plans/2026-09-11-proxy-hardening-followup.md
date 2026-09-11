@@ -207,10 +207,10 @@
 **Files:**
 - No code changes.
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
   Run: `dotnet test source/COMPEL.slnx`
   Expected: All 170+ tests pass with 0 failures.
 
-- [ ] **Step 2: Run Native AOT publish script**
+- [x] **Step 2: Run Native AOT publish script**
   Run: `pwsh scripts/Publish-Native-AOT-Release.ps1`
   Expected: Clean publish with 0 warnings.
