@@ -34,8 +34,6 @@ internal sealed class UDPForwarder : IDisposable
     // The Sequence Behind Each Issued Challenge Value, Which Must Differ From The Previous One The Client Was Sent; The Timestamp Is Not Derived From It And Comes From The Clock Instead
     private long challengeSequence;
 
-    private long lastIssuedTimestamp;
-
     private readonly ushort packetQuota;
     private readonly ushort gameCommandQuota;
 
@@ -108,6 +106,9 @@ internal sealed class UDPForwarder : IDisposable
                 if (Drop(client, "Session Creation Failed"))
                     logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client);
 
+                // No Session Is Ever Created On This Path, So Nothing Would Ever Evict The Entry Just Added And It Would Consume Its Reported-Drop Slot For The Rest Of The Process's Life; Releasing It Immediately Keeps The Budget For Sessions Whose Eviction Naturally Frees It
+                ReleaseDropReport(client);
+
                 continue;
             }
 
@@ -115,12 +116,10 @@ internal sealed class UDPForwarder : IDisposable
             if (created)
                 SendChallenge(client, session);
 
-            session.Touch();
-
             // Every Datagram Costs Its Source, Whatever It Turns Out To Contain, Which Is What The Drain Rate Is Calibrated Against; The Reference Does This First As Well
             scoreContainer.ChargeArrival(client);
 
-            // A Source Already Over The Threshold Is Refused Before Any Field Of Its Datagram Is Read. By This Point The Session Exists, Its Challenge Has Been Issued And Its Idle Timer Has Been Refreshed, Because A Client Must Be Challenged Before It Can Send Anything Valid
+            // A Source Already Over The Threshold Is Refused Before Any Field Of Its Datagram Is Read. By This Point The Session Exists And Its Challenge Has Been Issued, Because A Client Must Be Challenged Before It Can Send Anything Valid
             if (scoreContainer.IsWithinAllowance(client) is false)
             {
                 Drop(client, "Actioned");
@@ -176,6 +175,9 @@ internal sealed class UDPForwarder : IDisposable
             if (challenge is not SessionChallengeState.UnauthenticatedChallenge)
                 session.MarkAuthenticated();
 
+            // Refreshed Only Now, So That Refused Traffic Never Extends A Session's Life; The Reference Does The Same, Which Is What Makes Its Idle Timeout Effective Against A Source Sending Nothing But Refused Datagrams
+            session.Touch();
+
             try { await session.UpstreamSocket.SendAsync(buffer.AsMemory(0, result.ReceivedBytes), SocketFlags.None, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
             catch (Exception exception) { logger.LogDebug(exception, "Failed To Forward Datagram To Server For {Client}", client); }
@@ -199,16 +201,8 @@ internal sealed class UDPForwarder : IDisposable
     public void RepeatChallenges()
     {
         foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
-        {
-            // Only A Session That Has Authenticated Needs This: The Repeat Exists For A Client That Lost A Rotation Challenge Mid-Window, Which Is Authenticated By Definition
-            // Repeating To Every Session Instead Turns One Spoofed Datagram Into A Challenge Every Second Aimed At Whatever Address It Named, For As Long As The Session Lives
-            // TODO: The Session Table Itself Has No Cap, So A Spoofed-Source Flood Still Buys A Socket, A Pump Task And A Two-Minute Lifetime Per Datagram; The Reference Bounds This With "MAX_GAME_CONNECTIONS" And "MAX_GAME_CONNECTIONS_PER_IP", Which COMPEL Would Need A Policy For
-            if (pair.Value.HasAuthenticated is false)
-                continue;
-
             if (pair.Value.Challenges.Current is ChallengeWindow current)
-                TransmitChallenge(pair.Key, current.Challenge);
-        }
+                TransmitChallenge(pair.Key, current.Challenge, pair.Value.IssuedTimestamp);
     }
 
     private void SendChallenge(IPEndPoint client, ClientSession session)
@@ -221,20 +215,16 @@ internal sealed class UDPForwarder : IDisposable
 
         // Rotation Must Happen Before The Challenge Is Sent, So A Reply Arriving The Instant After Send Is Already Matched
         session.Challenges.Rotate(sequence, packetQuota);
+        session.IssuedTimestamp = session.NextIssuedTimestamp();
 
-        TransmitChallenge(client, sequence);
+        TransmitChallenge(client, sequence, session.IssuedTimestamp);
     }
 
-    private void TransmitChallenge(IPEndPoint client, uint challenge)
+    private void TransmitChallenge(IPEndPoint client, uint challenge, uint serverCreationTimestamp)
     {
-        // The Client's Gate Is A Strict Comparison It Never Re-Bases, So A Clock That Steps Backwards Would Have It Reject Every Replacement Until The Clock Caught Up
-        // Never Issuing A Timestamp Below The Last One Keeps The Sequence Monotonic Across A Backwards Step While Still Being Wall-Clock Derived, So A Restart Still Issues A Greater Value Than A Previous Run
-        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        long monotonic = Math.Max(Interlocked.Read(ref lastIssuedTimestamp) + 1, now);
-
-        Interlocked.Exchange(ref lastIssuedTimestamp, monotonic);
-
-        byte[] packet = BuildChallengePacket((uint)monotonic, challenge);
+        // The Client Accepts A Replacement Only When This Timestamp Is Strictly Greater Than The One It Holds, And It Keys What It Holds On Our Public Port, Which A Restart Does Not Change
+        // So It Comes From The Wall Clock And Advances Only When The Challenge Value Does: Advancing It On Every Transmit Ran It Hours Ahead Of The Clock, And A Restart Then Issued Timestamps The Client Rejected As Old
+        byte[] packet = BuildChallengePacket(serverCreationTimestamp, challenge);
 
         // The Challenge Must Originate From This (Front) Socket So Its Source Address And Port Match The Endpoint The Client Sends Its Game Traffic To, Which Is How The Client Keys The Authenticated Session
         try { frontSocket.SendTo(packet, SocketFlags.None, client); }
@@ -285,6 +275,12 @@ internal sealed class UDPForwarder : IDisposable
         logger.LogWarning("Dropped A Datagram From {Client} On Public Port {Port} ({Reason}); Further Drops From This Source Are Not Logged", client, PublicPort, reason);
 
         return true;
+    }
+
+    private void ReleaseDropReport(IPEndPoint client)
+    {
+        if (reportedDrops.TryRemove(client, out _))
+            Interlocked.Decrement(ref reportedDropCount);
     }
 
     private ClientSession GetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out bool created)
@@ -364,20 +360,27 @@ internal sealed class UDPForwarder : IDisposable
             {
                 if (sessions.TryGetValue(client, out ClientSession? current) && ReferenceEquals(current, session))
                     if (sessions.TryRemove(client, out ClientSession? removed))
+                    {
                         removed.Dispose();
+
+                        ReleaseDropReport(client);
+                    }
             }
         }
     }
 
-    public void EvictIdleSessions(TimeSpan idleTimeout)
+    public void EvictIdleSessions(TimeSpan idleTimeout, TimeSpan unauthenticatedTimeout)
     {
-        long cutoff = Environment.TickCount64 - (long)idleTimeout.TotalMilliseconds;
+        long now = Environment.TickCount64;
 
         // Sweep Under The Same Lock That Guards Session Creation So An Idle Session Can Never Be Removed And Disposed While A Datagram For The Same Client Is Concurrently Creating A Replacement, Which Would Otherwise Leak Whichever Session Lost The Race
         lock (sessionsLock)
         {
             foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
             {
+                TimeSpan timeout = pair.Value.HasAuthenticated ? idleTimeout : unauthenticatedTimeout;
+                long cutoff = now - (long)timeout.TotalMilliseconds;
+
                 if (Volatile.Read(ref pair.Value.LastActivityTicks) > cutoff)
                     continue;
 
@@ -385,8 +388,7 @@ internal sealed class UDPForwarder : IDisposable
                 {
                     removed.Dispose();
 
-                    if (reportedDrops.TryRemove(pair.Key, out _))
-                        Interlocked.Decrement(ref reportedDropCount);
+                    ReleaseDropReport(pair.Key);
                 }
             }
         }
@@ -413,11 +415,15 @@ internal sealed class UDPForwarder : IDisposable
 
         public long LastActivityTicks;
 
+        public uint IssuedTimestamp;
+
         // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
         // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
         private static readonly long UnknownChallengeGraceMilliseconds = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
 
         private readonly long createdTicks = Environment.TickCount64;
+
+        private long lastIssuedTimestamp;
 
         private bool authenticated;
 
@@ -443,6 +449,20 @@ internal sealed class UDPForwarder : IDisposable
         }
 
         public void Touch() => Volatile.Write(ref LastActivityTicks, Environment.TickCount64);
+
+        /// <summary>
+        ///     The timestamp to stamp into a newly issued challenge: the wall clock, floored so it never repeats or decreases for this session.
+        ///     The floor is what lets a challenge issued inside the same second as its predecessor still be accepted, and it is per session so that transmitting to other sessions cannot run it ahead of the clock.
+        /// </summary>
+        public uint NextIssuedTimestamp()
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long monotonic = Math.Max(lastIssuedTimestamp + 1, now);
+
+            lastIssuedTimestamp = monotonic;
+
+            return (uint)monotonic;
+        }
 
         public void Dispose()
         {

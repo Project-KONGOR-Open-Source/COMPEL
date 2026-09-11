@@ -12,6 +12,10 @@ public sealed class UDPProxyService : BackgroundService
 {
     private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
 
+    // "MAX_IDLE_TIME": A Session That Has Never Authenticated Is Swept Far Sooner Than One Carrying A Real Match, Because Any Datagram From A Novel Source Creates One And The Repeat Above Then Transmits To It Every Second
+    // This Is The Bound The Reference Uses, And It Is Why The Reference Can Repeat To Every Connection Unconditionally
+    private static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
+
     // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
     internal static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
 
@@ -173,7 +177,7 @@ public sealed class UDPProxyService : BackgroundService
                 if (rotating)
                 {
                     forwarder.RotateChallenges();
-                    forwarder.EvictIdleSessions(IdleSessionTimeout);
+                    forwarder.EvictIdleSessions(IdleSessionTimeout, UnauthenticatedSessionTimeout);
                 }
 
                 else

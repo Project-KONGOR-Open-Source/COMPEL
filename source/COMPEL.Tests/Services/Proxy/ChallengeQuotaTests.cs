@@ -59,4 +59,14 @@ public sealed class ChallengeQuotaTests
             await Assert.That(voicePacketsPerSecond).IsGreaterThan(0);
         }
     }
+
+    // A Compliant Client Self-Limits To Fifteen Sixteenths Of The Advertised Quota, So That Rate Must Stay Below The Drain Or Every Player Accumulates Score While Behaving Perfectly
+    // The Margin Is Currently About Four Percent, So Raising A Rate Or Lowering The Drain Without Seeing This Fail Would Action Everyone
+    [Test]
+    public async Task A_Client_Honouring_Its_Own_Soft_Limit_Stays_Below_The_Drain()
+    {
+        int softLimitedRate = ChallengeQuota.GamePacketsPerSecond - (ChallengeQuota.GamePacketsPerSecond / 16);
+
+        await Assert.That(softLimitedRate).IsLessThan(ViolationScoreContainer.EstimatedPacketsPerSecond);
+    }
 }

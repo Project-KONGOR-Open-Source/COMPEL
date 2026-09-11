@@ -6,13 +6,14 @@ namespace COMPEL.Services.Proxy;
 /// </summary>
 internal static class ChallengeQuota
 {
-    // "CHALLENGE_MAX_CTR" (720) Over The Reference's Five-Second "CHALLENGE_REFRESH_TIME"
+    // "CHALLENGE_MAX_CTR" (720) Over The Reference's Nominal Five-Second "CHALLENGE_REFRESH_TIME". The Reference's Own Counter Only Refreshes Every Sixth Pass, So Its Effective Rate Is 120 A Second Rather Than 144
+    // A Compliant Client Self-Limits Below This Rate Rather Than At It, And That Self-Limited Rate Must Still Stay Under The Drain: COMPEL's Margin There Is Narrower Than The Reference's Because This Ceiling Sits Above The Reference's Own Effective Rate
     internal const int GamePacketsPerSecond = 144;
 
-    // "CHALLENGE_MAX_GAME_CMD_CTR" (40) Over The Reference's Five-Second Refresh
+    // "CHALLENGE_MAX_GAME_CMD_CTR" (40) Over The Reference's Nominal Five-Second Refresh; Effectively About 6.7 A Second Rather Than 8, For The Same Reason As "GamePacketsPerSecond"
     internal const int GameCommandPacketsPerSecond = 8;
 
-    // "CHALLENGE_MAX_CTR_VOICE" (50) Over The Reference's Five-Second Refresh
+    // "CHALLENGE_MAX_CTR_VOICE" (50) Over The Reference's Nominal Five-Second Refresh; Effectively About 8.3 A Second Rather Than 10, For The Same Reason As "GamePacketsPerSecond"
     internal const int VoicePacketsPerSecond = 10;
 
     // "MAX_CTR_UNAUTHENTICATED": A Total For The Whole Unauthenticated State Rather Than A Rate, So It Is Not Derived
