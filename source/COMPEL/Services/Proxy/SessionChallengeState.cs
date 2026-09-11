@@ -10,7 +10,7 @@ internal sealed class SessionChallengeState
     // Zero Marks A Client That Has Not Accepted A Challenge Yet. "SendChallenge" Never Issues It, So It Can Never Collide With A Real Challenge
     internal const uint UnauthenticatedChallenge = 0;
 
-    // "KEEP_CHALLENGES": How Many Issued Challenges Stay Valid. At The Renewal Interval This Is A Minute Of History, Against The Reference's Thirty Seconds
+    // "KEEP_CHALLENGES": How Many Issued Challenges Stay Valid. At The Renewal Interval This Is A Minute Of History, Against The Reference's Effective Thirty-Six Seconds (Six Challenges At Its Own Effective Six-Second Refresh, Not Its Nominal Five)
     internal const int RetainedChallengeCount = 6;
 
     // "CLEAR_UNAUTHENTICATED": Renewals Between Resets Of The Pre-Authentication Window, So Its Small Total Is A Recurring Allowance Rather Than A Once-Per-Session Budget

@@ -283,6 +283,31 @@ public sealed class UDPForwarderTests
         }
     }
 
+    // The Mark Advanced On Every Transmit Rather Than Per Challenge, So It Ran Ahead Of The Clock At One Per Session Per Second And A Restart Then Issued Timestamps The Client Rejected As Old
+    // One Challenge From A Fresh Forwarder Cannot See That, Which Is Why The Original Test Passed Against It
+    [Test]
+    public async Task The_Challenge_Timestamp_Does_Not_Drift_Ahead_Of_The_Clock()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint issued = await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
+
+        // Far More Transmits Than Wall-Clock Seconds Will Pass During Them
+        for (int repeat = 0; repeat < 50; repeat++)
+            probe.Forwarder.RepeatChallenges();
+
+        await DrainUntilIdle(probe.Client);
+
+        probe.Forwarder.RotateChallenges();
+
+        uint timestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+        uint ceiling = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 2;
+
+        await Assert.That(timestamp).IsLessThanOrEqualTo(ceiling);
+    }
+
     // A Lost Challenge Must Be Retried Long Before The Next Rotation, Because The Client Enforces The Advertised Quota Itself And Goes Silent Rather Than Over-Sending
     [Test]
     public async Task A_Repeated_Challenge_Carries_The_Same_Value()
@@ -291,7 +316,7 @@ public sealed class UDPForwarderTests
 
         uint issued = await probe.Establish();
 
-        // The Repeat Is Now Gated To An Authenticated Session, So The Probe Must Accept The Issued Challenge Before "RepeatChallenges" Sends Anything For It
+        // Authenticating First Keeps This Test's Setup Independent Of Whether A Session Has Authenticated, Since The Repeat Now Reaches Every Session Regardless
         await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
 
         await DrainUntilIdle(probe.Client);
@@ -310,6 +335,24 @@ public sealed class UDPForwarderTests
         }
 
         await Assert.That(repeated).IsEqualTo(issued);
+    }
+
+    // The Repeat Exists So One Lost Challenge Cannot Leave A Client Throttled, So It Must Reach A Session Whose Only Challenge Was The One That Was Lost
+    [Test]
+    public async Task A_Session_That_Has_Not_Authenticated_Still_Receives_A_Repeat()
+    {
+        await using ForwarderProbe probe = new ();
+
+        // One Datagram Creates The Session And Triggers Its Only Challenge; Nothing Authenticates It
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        await DrainUntilIdle(probe.Client);
+
+        probe.Forwarder.RepeatChallenges();
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
     }
 
     // A Client Whose Source Port Changes Keeps Echoing The Challenge It Holds, Because It Keys That On Our Public Port; The New Session Knows Nothing Of It, So Charging For It Would Refuse A Well-Behaved Player
