@@ -238,9 +238,8 @@ public sealed class UDPForwarderTests
 
         uint challenge = await probe.Establish();
 
-        // Driven Over The Threshold Directly, So This Test Is About The Ordering Rather Than About Accumulating A Score
         while (probe.Scores.IsWithinAllowance(probe.ClientEndPoint))
-            probe.Scores.ChargeViolation(probe.ClientEndPoint, ViolationScoreContainer.TooShortViolationWeight);
+            probe.Scores.ChargeArrival(probe.ClientEndPoint);
 
         await Assert.That(await probe.Refuses(GameDatagram(challenge, counter: 1))).IsTrue();
     }
@@ -254,7 +253,7 @@ public sealed class UDPForwarderTests
         await probe.Establish();
 
         while (probe.Scores.IsWithinAllowance(probe.ClientEndPoint))
-            probe.Scores.ChargeViolation(probe.ClientEndPoint, ViolationScoreContainer.RateLimitViolationWeight);
+            probe.Scores.ChargeArrival(probe.ClientEndPoint);
 
         int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
 
@@ -691,6 +690,20 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
 
         probe.AttackIndicator.Charge(AttackIndicatorContainer.UnderAttackThreshold + 100);
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsTrue();
+    }
+
+    [Test]
+    public async Task Forty_Spoofed_Violation_Datagrams_Do_Not_Refuse_A_Victims_Valid_Traffic()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint challenge = await probe.Establish();
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
+
+        for (int index = 0; index < 40; index++)
+            await probe.Refuses(GameDatagram(challenge: 0xDEADBEEF, counter: (ushort)(index + 10)));
 
         await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsTrue();
     }

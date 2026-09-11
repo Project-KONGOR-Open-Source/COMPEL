@@ -63,11 +63,9 @@ public sealed class ViolationScoreContainerTests
 
         bool actioned = false;
 
-        // Nothing Is Drained, So The Score Only Climbs
-        for (int attempt = 0; attempt < 200; attempt++)
+        for (int attempt = 0; attempt < 4005; attempt++)
         {
             container.ChargeArrival(Source());
-            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
 
             if (container.IsWithinAllowance(Source()) is false)
             {
@@ -80,7 +78,21 @@ public sealed class ViolationScoreContainerTests
         await Assert.That(actioned).IsTrue();
     }
 
-    // A Regression Test For An All-Or-Nothing Charge: A Weight That Does Not Divide The Threshold Exactly Must Still Accumulate, Or A Source Can Park Just Below The Threshold Indefinitely
+    [Test]
+    public async Task Violations_Without_High_Arrival_Rate_Do_Not_Action_A_Source()
+    {
+        ViolationScoreContainer container = new (new ControllableTimeProvider());
+
+        for (int attempt = 0; attempt < 100; attempt++)
+            container.ChargeViolation(Source(), ViolationScoreContainer.TooShortViolationWeight);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(container.Score(Source())).IsGreaterThan(ViolationScoreContainer.ActionableThreshold);
+            await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
+        }
+    }
+
     [Test]
     public async Task A_Weight_That_Does_Not_Divide_The_Threshold_Still_Accumulates()
     {
@@ -89,11 +101,7 @@ public sealed class ViolationScoreContainerTests
         for (int attempt = 0; attempt < 400; attempt++)
             container.ChargeViolation(Source(), ViolationScoreContainer.DuplicateViolationWeight);
 
-        using (Assert.Multiple())
-        {
-            await Assert.That(container.IsWithinAllowance(Source())).IsFalse();
-            await Assert.That(container.Score(Source())).IsGreaterThan(ViolationScoreContainer.ActionableThreshold);
-        }
+        await Assert.That(container.Score(Source())).IsGreaterThan(ViolationScoreContainer.ActionableThreshold);
     }
 
     [Test]
@@ -103,9 +111,8 @@ public sealed class ViolationScoreContainerTests
         ViolationScoreContainer container = new (clock);
 
         while (container.IsWithinAllowance(Source()))
-            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeArrival(Source());
 
-        // A Minute Of Drain At The Configured Rate Is Far More Than The Threshold, So A Source That Stops Must Be Clear Again
         for (int second = 0; second < 60; second++)
         {
             clock.Advance(OneSecond);
@@ -115,7 +122,6 @@ public sealed class ViolationScoreContainerTests
         await Assert.That(container.IsWithinAllowance(Source())).IsTrue();
     }
 
-    // The Actioned State Must Clear Itself For A Client Sending At A Normal Rate, Because The Proxy Drops Locally Rather Than Blocking The Traffic, So The Client Keeps Sending And Nothing Else Would Ever Clear It
     [Test]
     public async Task An_Actioned_Source_Sending_Below_The_Expected_Rate_Recovers()
     {
@@ -123,9 +129,8 @@ public sealed class ViolationScoreContainerTests
         ViolationScoreContainer container = new (clock);
 
         while (container.IsWithinAllowance(Source()))
-            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeArrival(Source());
 
-        // Thirty Datagrams A Second Is Ordinary Game Traffic, Well Under The Expected Rate
         for (int second = 0; second < 60; second++)
         {
             for (int packet = 0; packet < 30; packet++)
@@ -145,7 +150,7 @@ public sealed class ViolationScoreContainerTests
         ViolationScoreContainer container = new (clock);
 
         while (container.IsWithinAllowance(Source()))
-            container.ChargeViolation(Source(), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeArrival(Source());
 
         for (int second = 0; second < 60; second++)
         {
@@ -278,7 +283,7 @@ public sealed class ViolationScoreContainerTests
         ViolationScoreContainer container = new (new ControllableTimeProvider());
 
         while (container.IsWithinAllowance(Source(40000)))
-            container.ChargeViolation(Source(40000), ViolationScoreContainer.RateLimitViolationWeight);
+            container.ChargeArrival(Source(40000));
 
         await Assert.That(container.IsWithinAllowance(Source(40001))).IsTrue();
     }
