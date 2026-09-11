@@ -86,3 +86,23 @@ Deferred from the original design, recorded as TODOs in `UDPProxyService`. The r
 `ChallengeQuota.GameCommandForInterval` derives a quota, and the challenge packet advertises it, so a compliant client self-limits to it. Nothing on the proxy side checks it, because the reference enforces it with a second per-challenge counter that only increments for `NETCMD_CLIENT_GAME_DATA` packets carrying order commands (`main.cpp:764`) — which needs the netcmd parsing deferred in item 6.
 
 Worth knowing that the client's *soft* limiter only watches the total counter, never the game-command counter, so a client that exceeds the game-command quota hits its hard limit with no back-pressure warning. That is the client's behaviour, not something COMPEL can change.
+
+---
+
+## 8. The under-attack indicator lags by up to five minutes
+
+`IsUnderAttack` is recomputed only when a five-minute window closes, so a flood is invisible for up to five minutes and the flag stays set for up to five minutes after one ends. It is also a raw count of refused datagrams, where the reference's equivalent is live and weighted and is read **per datagram** to refuse new connections outright.
+
+**Why this matters for item 2.** Item 2 suggests refusing new sessions while `IsUnderAttack` holds. Built on this indicator that would gate admission on data up to five minutes stale, and would refuse every new player for five minutes after an attack ended. The indicator has to become live before it can be used as a gate — recorded here so the next person does not discover that after wiring it up.
+
+---
+
+## 9. The maintenance loop is a single serial task across all forwarders
+
+`RotateChallenges` and `RepeatChallenges` are synchronous and issue a blocking `SendTo` per session, inside one loop that also runs the score drain and covers every forwarder. At legitimate load this is trivial. Combined with item 2's uncapped session table, one attacked public port can stall the shared loop, delaying challenge rotation for every other instance's players and delaying the drain that is the only way an actioned source recovers. The transparent relay had no shared serial path, so this cross-instance coupling is new.
+
+---
+
+## 10. `UDPForwarder` carries the whole pipeline inline
+
+`Run` holds the validation pipeline across roughly a hundred lines of the receive loop, and the class is now around 460 lines mixing socket lifetime, the session table, challenge issuing, validation and drop accounting. The pure pieces were extracted into their own types; the pipeline was not, which is why several defects in it were only reachable through a live loopback socket rather than a unit test. `ClientSession` is a private nested class, so the two flags the repeat and the grace turn on have no direct test surface at all.
