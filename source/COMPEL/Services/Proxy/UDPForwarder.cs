@@ -77,6 +77,9 @@ internal sealed class UDPForwarder : IDisposable
         socket.IOControl(windowsUDPConnectionResetControlCode, [ 0x00, 0x00, 0x00, 0x00 ], null);
     }
 
+    // TODO: The Validation Pipeline Below Lives Inline In This Receive Loop, So Every Branch Of It Can Only Be Exercised Through A Live Socket; Extracting It Into Its Own Unit Would Make Each Branch Unit-Testable
+    // That Is Not Cosmetic: Several Defects In This Pipeline Were Found By A Reviewer Reading The Code Rather Than By A Test, Because No Test Could Reach Them
+    // See "docs/superpowers/specs/2026-09-11-proxy-abuse-protection-follow-up.md", Item 10
     public async Task Run(CancellationToken stoppingToken)
     {
         byte[] buffer = new byte[DatagramBufferSize];
@@ -410,6 +413,9 @@ internal sealed class UDPForwarder : IDisposable
         sessions.Clear();
     }
 
+    // TODO: This Class Reads "Environment.TickCount64" And The Wall Clock Directly, So Neither The Unknown-Challenge Grace's Bound Nor Either Idle Timeout Can Be Reached By A Test Without Waiting Out The Real Interval
+    // Injecting A "TimeProvider" As "ViolationScoreContainer" Already Does Would Make All Three Testable, And "ControllableTimeProvider" Already Exists In The Test Project For Exactly This
+    // See "docs/superpowers/specs/2026-09-11-proxy-abuse-protection-follow-up.md", Item 4
     private sealed class ClientSession : IDisposable
     {
         public Socket UpstreamSocket { get; }
