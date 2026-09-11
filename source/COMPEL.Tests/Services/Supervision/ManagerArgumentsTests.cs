@@ -41,6 +41,20 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
+    public async Task The_Argument_Vector_Carries_The_Mod_Stack()
+    {
+        string[] arguments = Build();
+
+        int modIndex = Array.IndexOf(arguments, "-mod");
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(modIndex).IsGreaterThanOrEqualTo(0);
+            await Assert.That(arguments[modIndex + 1]).IsEqualTo("base;game;server");
+        }
+    }
+
+    [Test]
     public async Task The_Execute_Payload_Carries_The_Legacy_Flags_And_The_New_Reauthentication_Frequency()
     {
         string joined = string.Join(' ', Build());
