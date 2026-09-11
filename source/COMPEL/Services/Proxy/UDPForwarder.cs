@@ -88,9 +88,6 @@ internal sealed class UDPForwarder : IDisposable
         socket.IOControl(windowsUDPConnectionResetControlCode, [ 0x00, 0x00, 0x00, 0x00 ], null);
     }
 
-    // TODO: The Validation Pipeline Below Lives Inline In This Receive Loop, So Every Branch Of It Can Only Be Exercised Through A Live Socket; Extracting It Into Its Own Unit Would Make Each Branch Unit-Testable
-    // That Is Not Cosmetic: Several Defects In This Pipeline Were Found By A Reviewer Reading The Code Rather Than By A Test, Because No Test Could Reach Them
-    // See "docs/superpowers/specs/2026-09-11-proxy-abuse-protection-follow-up.md", Item 10
     public async Task Run(CancellationToken stoppingToken)
     {
         byte[] buffer = new byte[DatagramBufferSize];
@@ -140,49 +137,25 @@ internal sealed class UDPForwarder : IDisposable
 
             ReadOnlySpan<byte> datagram = buffer.AsSpan(0, result.ReceivedBytes);
 
-            // The Length Guard Runs Before Any Field Is Read So None Is Ever Read Out Of Range
-            if (ClientPacketReader.TryRead(datagram, kind, out uint challenge, out ushort counter) is false)
+            DatagramValidationResult outcome = DatagramValidator.Validate(
+                datagram,
+                kind,
+                challenges,
+                client,
+                session.IsWithinUnknownChallengeGrace);
+
+            if (outcome.IsAdmitted is false)
             {
-                Drop(client, ViolationScoreContainer.TooShortViolationWeight, "Too Short");
-
-                continue;
-            }
-
-            ChallengeWindow? window = challenges.Match(challenge, client);
-
-            // A Non-Zero Challenge This Session Never Issued Or No Longer Retains. The Reference Treats This Separately From A Client That Has Not Been Challenged Yet, Which Echoes Zero And Matches The Session's Unauthenticated Window
-            if (window is null)
-            {
-                // Refused Either Way, So This Is Not A Relay Path; What The Grace Suppresses Is Only The Violation Weight, Which At Ordinary Game Rates Would Cross The Threshold In Well Under A Second
-                if (session.IsWithinUnknownChallengeGrace)
-                    Drop(client, "Unknown Challenge Within Grace");
-
+                if (outcome.ViolationWeight > 0)
+                    Drop(client, outcome.ViolationWeight, outcome.DropReason!);
                 else
-                    Drop(client, ViolationScoreContainer.ChallengeViolationWeight, "Unknown Challenge");
-
-                continue;
-            }
-
-            // The Quota Is Checked Before The Counter Indexes The Seen Set, Because The Counter Arrives From The Client
-            if (window.TryAdmit(counter, out ChallengeAdmission admission) is false)
-            {
-                // Constant Reasons Rather Than "admission.ToString()", Which Would Allocate On Every Dropped Datagram Whether Or Not The Drop Is Logged, And A Flood Is Made Entirely Of Dropped Datagrams
-                if (admission is ChallengeAdmission.Duplicate)
-                    Drop(client, ViolationScoreContainer.DuplicateViolationWeight, "Duplicate");
-
-                // A Client That Has Not Accepted A Challenge Yet Is Held To A Small Total Rather Than A Rate, And The Reference Weights Exceeding That Total More Heavily Than An Ordinary Rate Limit
-                else if (challenge is SessionChallengeState.UnauthenticatedChallenge)
-                    Drop(client, ViolationScoreContainer.UnauthenticatedViolationWeight, "Unauthenticated");
-
-                else
-                    Drop(client, ViolationScoreContainer.RateLimitViolationWeight, "Over Quota");
+                    Drop(client, outcome.DropReason!);
 
                 continue;
             }
 
             // A Matched Non-Zero Challenge Means The Client Has Demonstrably Accepted One Of Ours, So It No Longer Needs The Benefit Of The Doubt
-            // Matching Only The Unauthenticated Window Proves Nothing, Because A Client That Has Accepted No Challenge At All Echoes Zero
-            if (challenge is not SessionChallengeState.UnauthenticatedChallenge)
+            if (outcome.IsAuthenticatedChallenge)
                 session.MarkAuthenticated();
 
             // Refreshed Only Now, So That Refused Traffic Never Extends A Session's Life; The Reference Does The Same, Which Is What Makes Its Idle Timeout Effective Against A Source Sending Nothing But Refused Datagrams
