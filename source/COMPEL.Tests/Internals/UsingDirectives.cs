@@ -14,6 +14,7 @@ global using Microsoft.Extensions.Logging.Abstractions;
 global using Microsoft.Extensions.Options;
 
 global using System.Buffers.Binary;
+global using System.Collections.Concurrent;
 global using System.Net;
 global using System.Net.Sockets;
 global using System.Reflection;

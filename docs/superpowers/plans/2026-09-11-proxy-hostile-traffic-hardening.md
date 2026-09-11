@@ -92,10 +92,10 @@ The reference caps at `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP
 
 **Decide the numbers first.** COMPEL runs one forwarder per instance per kind, and `Instances` is configurable up to the logical processor count, so a per-forwarder cap of 24 on a sixteen-core host permits up to 384 game sessions and 384 voice sessions before any cap binds. Twenty-four per forwarder matches the reference and a full match plus spectators; confirm against `MatchServerManagerOptions` whether a busy host wants more, and whether the per-address cap should be ten.
 
-- [ ] **Step 1: Fact verification** of all four constants and both enforcement sites, including which comparison each uses.
-- [ ] **Step 2: Write the failing tests.** A forwarder at its cap refuses a novel endpoint without creating a session; an address at its per-address cap is refused while a different address is admitted; a session freed by eviction releases its slot.
-- [ ] **Step 3: Implement.** Check both caps before constructing anything. Count live sessions per `IPAddress`, decremented wherever a session dies. Note that this is **not** the same set as the sites `ReleaseDropReport` is called from: of those three, only the pump's `finally` and `EvictIdleSessions` are session deaths, the third being the orphaned-report reclaim loop that runs after eviction; and `Dispose` tears down every remaining session without calling it at all. A refused datagram takes the unweighted drop: being the twenty-fifth player is not the client's fault.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: Fact verification** of all four constants and both enforcement sites, including which comparison each uses.
+- [x] **Step 2: Write the failing tests.** A forwarder at its cap refuses a novel endpoint without creating a session; an address at its per-address cap is refused while a different address is admitted; a session freed by eviction releases its slot.
+- [x] **Step 3: Implement.** Check both caps before constructing anything. Count live sessions per `IPAddress`, decremented wherever a session dies. Note that this is **not** the same set as the sites `ReleaseDropReport` is called from: of those three, only the pump's `finally` and `EvictIdleSessions` are session deaths, the third being the orphaned-report reclaim loop that runs after eviction; and `Dispose` tears down every remaining session without calling it at all. A refused datagram takes the unweighted drop: being the twenty-fifth player is not the client's fault.
+- [x] **Step 4: Commit.** (`954573a`)
 
 ## Task 4: Make The Under-Attack Indicator Live
 
@@ -111,11 +111,11 @@ The reference caps at `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP
 
 Beware `:1041`, which an earlier draft of this document cited for the per-datagram read and which says nothing of the kind: it sits in the server-to-client relay's error handler, where an indicator *above* threshold suppresses the idle teardown of a failing socket.
 
-- [ ] **Step 1: Fact verification.** Read every `under_attack_indicator` site and confirm the weights and reset above, and that the per-datagram read is at `:1714` and `:1383`.
-- [ ] **Step 2: Write the failing tests.** The indicator rises within one maintenance pass of a burst rather than one window, and falls once the burst stops. If the reference's weights are adopted, pin their *relative* order as the reference has it — a datagram blocked by validation weighs 100 against a cap refusal's 10, which is the opposite way round from how this document first stated it.
-- [ ] **Step 3: Implement** as a decaying weighted counter updated on the drop path, using the same elapsed-proportional drain `ViolationScoreContainer` already uses and tests, and record the divergence from the reference's window reset where the constant is declared.
-- [ ] **Step 4: Gate admission** on it, as the reference does at `:1714`. An existing session is unaffected, so a match in progress is never interrupted.
-- [ ] **Step 5: Commit.**
+- [x] **Step 1: Fact verification.** Read every `under_attack_indicator` site and confirm the weights and reset above, and that the per-datagram read is at `:1714` and `:1383`.
+- [x] **Step 2: Write the failing tests.** The indicator rises within one maintenance pass of a burst rather than one window, and falls once the burst stops. If the reference's weights are adopted, pin their *relative* order as the reference has it — a datagram blocked by validation weighs 100 against a cap refusal's 10, which is the opposite way round from how this document first stated it.
+- [x] **Step 3: Implement** as a decaying weighted counter updated on the drop path, using the same elapsed-proportional drain `ViolationScoreContainer` already uses and tests, and record the divergence from the reference's window reset where the constant is declared.
+- [x] **Step 4: Gate admission** on it, as the reference does at `:1714`. An existing session is unaffected, so a match in progress is never interrupted.
+- [x] **Step 5: Commit.** (`766275b`)
 
 ## Task 5: Stop A Spoofed Source Silencing A Player
 
@@ -131,8 +131,8 @@ Beware `:1041`, which an earlier draft of this document cited for the per-datagr
 
 **Alternatives considered, recorded so they are not rediscovered.** Capping what unmatched-challenge violations alone may contribute is simpler but arbitrary and leaves a smaller version of the same asymmetry. Exempting a source whose current datagram validates protects the victim perfectly but makes the actioned state gate nothing, since valid traffic would always relay. Doing nothing is defensible only if the proxy is never exposed to a hostile player.
 
-- [ ] **Step 1: Confirm the design** with the repository owner, presenting the proposal and both alternatives. If rejected, re-plan rather than implementing a compromise.
-- [ ] **Step 2 onward:** written once the design is confirmed. The test that matters is that forty spoofed datagrams no longer refuse a victim's own valid traffic.
+- [x] **Step 1: Confirm the design** with the repository owner, presenting the proposal and both alternatives. If rejected, re-plan rather than implementing a compromise. (Confirmed design)
+- [x] **Step 2: Implement & verify.** Separate arrival score from violation score so actioning a source is driven by sustained arrival rate alone. Verified with test `Forty_Spoofed_Violation_Datagrams_Do_Not_Refuse_A_Victims_Valid_Traffic`. (`17f1d82`)
 
 ---
 
