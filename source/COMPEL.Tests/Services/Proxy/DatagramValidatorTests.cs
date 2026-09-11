@@ -5,7 +5,7 @@ namespace COMPEL.Tests.Services.Proxy;
 /// </summary>
 public sealed class DatagramValidatorTests
 {
-    private static readonly IPEndPoint ClientEndpoint = new (IPAddress.Parse("127.0.0.1"), 54321);
+    private static readonly IPEndPoint ClientEndPoint = new (IPAddress.Parse("127.0.0.1"), 54321);
 
     [Test]
     public async Task Datagram_Shorter_Than_Minimum_Length_Is_Dropped_As_Too_Short()
@@ -17,7 +17,7 @@ public sealed class DatagramValidatorTests
             shortDatagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
@@ -40,7 +40,7 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: true);
 
         using (Assert.Multiple())
@@ -62,7 +62,7 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
@@ -85,7 +85,7 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
@@ -111,14 +111,14 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         DatagramValidationResult secondPass = DatagramValidator.Validate(
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
@@ -146,7 +146,7 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
@@ -169,7 +169,7 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
@@ -192,7 +192,7 @@ public sealed class DatagramValidatorTests
             datagram,
             ProxyForwarderKind.Game,
             challenges,
-            ClientEndpoint,
+            ClientEndPoint,
             isWithinUnknownChallengeGrace: false);
 
         using (Assert.Multiple())
