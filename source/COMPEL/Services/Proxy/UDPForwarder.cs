@@ -36,10 +36,6 @@ internal sealed class UDPForwarder : IDisposable
     private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = new ();
     private readonly SessionChallengeState challenges = new ();
     private readonly Lock sessionsLock = new ();
-
-    // The Sequence Behind Each Issued Challenge Value, Which Must Differ From The Previous One The Client Was Sent; The Timestamp Is Not Derived From It And Comes From The Clock Instead
-    private long challengeSequence;
-
     private readonly ushort packetQuota;
     private readonly ushort gameCommandQuota;
 
@@ -241,10 +237,15 @@ internal sealed class UDPForwarder : IDisposable
 
     private uint NextChallengeSequence()
     {
-        uint sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        uint sequence;
 
-        if (sequence is 0)
-            sequence = unchecked((uint)Interlocked.Increment(ref challengeSequence));
+        do
+        {
+            RandomNumberGenerator.Fill(bytes);
+            sequence = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        }
+        while (challenges.ContainsChallenge(sequence));
 
         return sequence;
     }

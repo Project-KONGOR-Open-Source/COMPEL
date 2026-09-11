@@ -138,4 +138,43 @@ public sealed class SessionChallengeStateTests
 
         await Assert.That(state.Match(100)).IsNull();
     }
+
+    [Test]
+    public async Task A_Challenge_Value_Currently_Retained_Is_Never_Reissued()
+    {
+        SessionChallengeState state = new ();
+        HashSet<uint> issued = new ();
+
+        for (int index = 0; index < 50; index++)
+        {
+            uint challenge;
+            do
+            {
+                challenge = RandomUInt32();
+            }
+            while (state.ContainsChallenge(challenge));
+
+            await Assert.That(state.ContainsChallenge(challenge)).IsFalse();
+
+            state.Rotate(challenge, quota: 64);
+            issued.Add(challenge);
+        }
+
+        await Assert.That(issued.Count).IsEqualTo(50);
+    }
+
+    [Test]
+    public async Task The_Unauthenticated_Challenge_Zero_Is_Always_Considered_Contained()
+    {
+        SessionChallengeState state = new ();
+
+        await Assert.That(state.ContainsChallenge(SessionChallengeState.UnauthenticatedChallenge)).IsTrue();
+    }
+
+    private static uint RandomUInt32()
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        RandomNumberGenerator.Fill(bytes);
+        return BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+    }
 }
