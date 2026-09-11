@@ -20,7 +20,7 @@ internal sealed class ChallengeWindow
     // The Check And The Record Below Must Not Be Separable, Or Two Datagrams Carrying The Same Counter Could Both Be Admitted; The Forwarder's Single Receive Loop Makes That Unlikely Rather Than Impossible, And An Uncontended Lock Costs Nothing Against A Datagram's Other Work
     private readonly Lock admissionLock = new ();
 
-    // A Byte Per Admissible Counter Rather Than A Bit, Because Indexing Beats Masking On This Path And The Whole Window Is Under One And A Half Kilobytes At The Largest Quota
+    // A Byte Per Admissible Counter Rather Than A Bit, Because Indexing Beats Masking On This Path And The Whole Window Is Under One And A Half Kilobytes At The Configured Quota; The Largest Value "Derive" Can Return Is "ushort.MaxValue", Which Is 64 Kilobytes
     private readonly bool[] seen;
 
     internal ChallengeWindow(uint challenge, ushort quota)
