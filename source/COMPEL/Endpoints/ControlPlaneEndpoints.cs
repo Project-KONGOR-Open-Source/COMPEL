@@ -100,6 +100,18 @@ public static class ControlPlaneEndpoints
             await supervisor.RequestRestart(cancellationToken);
 
             return TypedResults.Ok(new ActionResponse("restart", true, "Restart Requested"));
+
+        management.MapPost("/proxy/restart", async Task<IResult> (UDPProxyService proxy, CancellationToken cancellationToken) =>
+        {
+            if (proxy.IsEnabled is false)
+                return TypedResults.Conflict(new ActionResponse("proxy/restart", false, "The Proxy Is Disabled In Configuration"));
+
+            bool restarted = await proxy.RequestRestart(cancellationToken);
+
+            if (restarted is false)
+                return TypedResults.Conflict(new ActionResponse("proxy/restart", false, "Failed To Restart The Proxy"));
+
+            return TypedResults.Ok(new ActionResponse("proxy/restart", true, "Proxy Restart Requested"));
         });
 
         return application;

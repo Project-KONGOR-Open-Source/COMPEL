@@ -59,6 +59,7 @@ On Windows, COMPEL must be installed in a directory whose full path contains a w
 | `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, manager/proxy state, uptime. |
 | `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                    |
 | `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                      |
+| `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                    |
 
 Authenticate management requests with `Authorization: Bearer <ControlPlaneAuthenticationToken>`, using the `ControlPlaneAuthenticationToken` from `COMPEL.json`.
 
