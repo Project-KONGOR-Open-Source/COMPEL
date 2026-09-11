@@ -614,11 +614,11 @@ public sealed class UDPForwarderTests
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
             await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
 
-            using Socket clientOtherIp = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            clientOtherIp.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0));
+            using Socket clientOtherIP = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            clientOtherIP.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0));
 
-            byte[] otherIpDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
-            await Assert.That(await probe.RelaysFrom(clientOtherIp, otherIpDatagram)).IsTrue();
+            byte[] otherIPDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+            await Assert.That(await probe.RelaysFrom(clientOtherIP, otherIPDatagram)).IsTrue();
         }
         finally
         {
