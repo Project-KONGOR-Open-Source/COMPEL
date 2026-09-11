@@ -336,6 +336,46 @@ public sealed class UDPForwarderTests
         await Assert.That(timestamp).IsLessThanOrEqualTo(ceiling);
     }
 
+    [Test]
+    public async Task Rotated_And_Repeated_Challenges_Are_Accepted_By_Client_Challenge_Store()
+    {
+        await using ForwarderProbe probe = new ();
+
+        uint initialChallenge = await probe.Establish();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(probe.ClientChallenges.TryGetChallenge(probe.PublicEndPoint, out uint storedInitial, out _)).IsTrue();
+            await Assert.That(storedInitial).IsEqualTo(initialChallenge);
+        }
+
+        // A Rotation Emits A New Challenge Packet With Strictly Greater Monotonic Timestamp
+        probe.Forwarder.RotateChallenges();
+
+        uint rotatedChallenge = await probe.ReceiveAndStoreChallenge();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(probe.ClientChallenges.TryGetChallenge(probe.PublicEndPoint, out uint storedRotated, out _)).IsTrue();
+            await Assert.That(storedRotated).IsEqualTo(rotatedChallenge);
+            await Assert.That(storedRotated).IsNotEqualTo(initialChallenge);
+        }
+
+        // A Repeat Re-Sends The Current Challenge With Same Timestamp, Which The Store Ignores Without Failing
+        probe.Forwarder.RepeatChallenges();
+
+        byte[] repeatPacket = await ReadOneChallengePacket(probe.Forwarder, probe.Client);
+        bool repeatAccepted = probe.ClientChallenges.TryProcessChallengePacket(probe.PublicEndPoint, repeatPacket);
+
+        using (Assert.Multiple())
+        {
+            // A Repeat Has Same Timestamp So Client Retains Held Challenge Without Updating Or Throwing
+            await Assert.That(repeatAccepted).IsFalse();
+            await Assert.That(probe.ClientChallenges.TryGetChallenge(probe.PublicEndPoint, out uint storedAfterRepeat, out _)).IsTrue();
+            await Assert.That(storedAfterRepeat).IsEqualTo(rotatedChallenge);
+        }
+    }
+
     // A Lost Challenge Must Be Retried Long Before The Next Rotation, Because The Client Enforces The Advertised Quota Itself And Goes Silent Rather Than Over-Sending
     [Test]
     public async Task A_Repeated_Challenge_Carries_The_Same_Value()
@@ -849,9 +889,13 @@ public sealed class UDPForwarderTests
 
         internal AttackIndicatorContainer AttackIndicator { get; }
 
+        internal ClientChallengeStoreDouble ClientChallenges { get; } = new ();
+
         internal Socket Server => server;
 
         internal Socket Client => client;
+
+        internal IPEndPoint PublicEndPoint => publicEndPoint;
 
         internal IPEndPoint ClientEndPoint => client.LocalEndPoint is IPEndPoint boundClient ? boundClient : throw new InvalidOperationException("Could Not Determine The Client Endpoint");
 
@@ -882,7 +926,21 @@ public sealed class UDPForwarderTests
         {
             await Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
 
-            return await ReadOneChallengeValue(Forwarder, client);
+            byte[] packet = await ReadOneChallengePacket(Forwarder, client);
+            ClientChallenges.TryProcessChallengePacket(publicEndPoint, packet);
+
+            return ChallengeValue(packet);
+        }
+
+        /// <summary>
+        ///     Reads one challenge packet emitted to the probe client and processes it through the client challenge store double.
+        /// </summary>
+        internal async Task<uint> ReceiveAndStoreChallenge()
+        {
+            byte[] packet = await ReadOneChallengePacket(Forwarder, client);
+            ClientChallenges.TryProcessChallengePacket(publicEndPoint, packet);
+
+            return ChallengeValue(packet);
         }
 
         public async ValueTask DisposeAsync()
