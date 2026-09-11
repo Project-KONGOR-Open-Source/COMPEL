@@ -15,11 +15,17 @@ public sealed class UDPProxyService : BackgroundService
     // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
     private static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
 
+    // The Maintenance Pass Runs Far More Often Than A Rotation, Because The Reference Re-Sends The Current Challenge About Once A Second So That One Lost Challenge Datagram Cannot Leave A Client Throttled
+    private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromSeconds(1);
+
+    // Derived Rather Than Written Down Twice, So The Renewal Interval Stays What It Says It Is If Either Value Changes
+    private static readonly int MaintenancePassesPerRotation = (int) Math.Max(1, ChallengeRenewalInterval.Ticks / MaintenanceInterval.Ticks);
+
     // "UNDER_ATTACK_THRESHOLD": Refusals Within One Window Above Which The Proxy Reports Itself Under Attack
     private const int UnderAttackThreshold = 1000;
 
     // The Reference Resets Its Indicator Every Five Minutes Of Its Own Housekeeping Tick; Derived From The Interval Rather Than Written Down Twice, So It Stays Five Minutes If The Interval Changes
-    private static readonly int UnderAttackWindowPasses = (int) Math.Max(1, TimeSpan.FromMinutes(5).Ticks / ChallengeRenewalInterval.Ticks);
+    private static readonly int UnderAttackWindowPasses = (int) Math.Max(1, TimeSpan.FromMinutes(5).Ticks / MaintenanceInterval.Ticks);
 
     private readonly MatchServerManagerOptions options;
     private readonly PortPlan ports;
@@ -37,6 +43,7 @@ public sealed class UDPProxyService : BackgroundService
     private int failedForwarderCount;
     private int droppedDatagramCount;
     private int maintenancePassesThisWindow;
+    private int maintenancePassesSinceRotation;
     private int droppedDatagramsAtWindowStart;
     private bool isUnderAttack;
 
@@ -148,17 +155,31 @@ public sealed class UDPProxyService : BackgroundService
     {
         while (stoppingToken.IsCancellationRequested is false)
         {
-            try { await Task.Delay(ChallengeRenewalInterval, stoppingToken).ConfigureAwait(false); }
+            try { await Task.Delay(MaintenanceInterval, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
 
             scoreContainer.Drain();
+
+            bool rotating = ++maintenancePassesSinceRotation >= MaintenancePassesPerRotation;
+
+            if (rotating)
+                maintenancePassesSinceRotation = 0;
 
             int droppedDatagrams = 0;
 
             foreach (UDPForwarder forwarder in forwarders)
             {
-                forwarder.ChallengeActiveSessions();
-                forwarder.EvictIdleSessions(IdleSessionTimeout);
+                // A Rotation Sends The New Challenge Itself, So There Is Nothing To Repeat On That Pass
+                if (rotating)
+                {
+                    forwarder.RotateChallenges();
+                    forwarder.EvictIdleSessions(IdleSessionTimeout);
+                }
+
+                else
+                {
+                    forwarder.RepeatChallenges();
+                }
 
                 droppedDatagrams += forwarder.DroppedDatagramCount;
             }

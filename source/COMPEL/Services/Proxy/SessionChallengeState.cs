@@ -50,6 +50,18 @@ internal sealed class SessionChallengeState
     }
 
     /// <summary>
+    ///     The most recently issued challenge, or <see langword="null"/> when none has been issued to this session yet.
+    /// </summary>
+    internal ChallengeWindow? Current
+    {
+        get
+        {
+            lock (stateLock)
+                return retained.Count is 0 ? null : retained[0];
+        }
+    }
+
+    /// <summary>
     ///     The window for the challenge the client echoed, or <see langword="null"/> when it echoed a non-zero challenge this session never issued or no longer retains.
     ///     <see cref="UnauthenticatedChallenge"/> always matches, because a client that has not been challenged yet has nothing else to echo.
     /// </summary>
