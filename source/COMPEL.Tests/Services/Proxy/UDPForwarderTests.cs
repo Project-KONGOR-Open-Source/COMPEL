@@ -21,7 +21,7 @@ public sealed class UDPForwarderTests
 
         ViolationScoreContainer container = new (TimeProvider.System);
 
-        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, NullLogger.Instance);
+        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, TimeProvider.System, NullLogger.Instance);
 
         using CancellationTokenSource lifetime = new ();
         Task run = forwarder.Run(lifetime.Token);
@@ -103,7 +103,7 @@ public sealed class UDPForwarderTests
 
         ViolationScoreContainer container = new (TimeProvider.System);
 
-        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, NullLogger.Instance);
+        using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, TimeProvider.System, NullLogger.Instance);
 
         using CancellationTokenSource lifetime = new ();
         Task run = forwarder.Run(lifetime.Token);
@@ -395,6 +395,130 @@ public sealed class UDPForwarderTests
         await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsGreaterThanOrEqualTo(scoreBefore + ViolationScoreContainer.ChallengeViolationWeight);
     }
 
+    // Pinned As Literals Deliberately: The Behavioural Tests Below Advance The Clock By Whatever These Constants Say, So On Their Own They Would Still Pass If A Constant Were Widened To Infinity
+    // Asserting The Values Here Is What Makes Changing One A Deliberate Act With A Failing Test Behind It
+    [Test]
+    public async Task The_Grace_And_Both_Idle_Timeouts_Are_The_Durations_They_Are_Documented_As()
+    {
+        using (Assert.Multiple())
+        {
+            await Assert.That(UDPForwarder.UnknownChallengeGrace).IsEqualTo(TimeSpan.FromSeconds(30));
+            await Assert.That(UDPProxyService.UnauthenticatedSessionTimeout).IsEqualTo(TimeSpan.FromSeconds(15));
+            await Assert.That(UDPProxyService.IdleSessionTimeout).IsEqualTo(TimeSpan.FromMinutes(2));
+        }
+    }
+
+    // The Grace Has To End, Or A Hostile Source Keeps The Violation Weight Suppressed For As Long As It Cares To Send: The Bound Is The Only Limit On That, And Until The Clock Was Injectable No Test Could Reach It
+    [Test]
+    public async Task A_Session_That_Has_Not_Authenticated_Is_Charged_For_An_Unknown_Challenge_Once_The_Grace_Has_Expired()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        // One Datagram Creates The Session; Echoing Zero Does Not Authenticate It, So Only The Grace's Expiry Can Change The Charge Below
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        clock.Advance(UDPForwarder.UnknownChallengeGrace);
+
+        int scoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+
+        await Assert.That(await probe.Refuses(GameDatagram(challenge: 0xDEADBEEF, counter: 600))).IsTrue();
+
+        await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(scoreBefore + ViolationScoreContainer.PacketScore + ViolationScoreContainer.ChallengeViolationWeight);
+    }
+
+    [Test]
+    public async Task A_Session_That_Has_Not_Authenticated_Is_Evicted_Once_The_Unauthenticated_Timeout_Has_Elapsed()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        await DrainUntilIdle(probe.Client);
+
+        clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout);
+
+        probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
+
+        probe.Forwarder.RepeatChallenges();
+
+        // A Repeat Reaches Every Session Holding A Challenge, So Nothing Arriving Is What Proves The Session Is Gone
+        await Assert.That(await TryReceive(probe.Client)).IsNull();
+    }
+
+    [Test]
+    public async Task A_Session_That_Has_Not_Authenticated_Survives_Until_The_Unauthenticated_Timeout()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
+
+        await DrainUntilIdle(probe.Client);
+
+        clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout - TimeSpan.FromSeconds(1));
+
+        probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
+
+        probe.Forwarder.RepeatChallenges();
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
+    }
+
+    // The Shorter Timeout Applies Only Until A Session Authenticates, Which Is What Keeps It From Sweeping A Real Match That Has Gone Quiet
+    [Test]
+    public async Task A_Session_That_Has_Authenticated_Survives_The_Unauthenticated_Timeout()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        uint issued = await probe.Establish();
+
+        // Admitting A Datagram Under An Issued Challenge Is What Marks The Session Authenticated; Echoing Zero Would Not
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
+
+        await DrainUntilIdle(probe.Client);
+
+        clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout);
+
+        probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
+
+        probe.Forwarder.RepeatChallenges();
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Session_That_Has_Authenticated_Is_Evicted_Once_The_Idle_Timeout_Has_Elapsed()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        uint issued = await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
+
+        await DrainUntilIdle(probe.Client);
+
+        clock.Advance(UDPProxyService.IdleSessionTimeout);
+
+        probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
+
+        probe.Forwarder.RepeatChallenges();
+
+        await Assert.That(await TryReceive(probe.Client)).IsNull();
+    }
+
     private static bool IsChallenge(byte[] datagram)
         => datagram.Length >= 58 && datagram[40] is 0xFF && datagram[41] is 0xFF && (datagram[42] & 0x40) is not 0 && datagram[43] is 0x00;
 
@@ -486,8 +610,13 @@ public sealed class UDPForwarderTests
         private readonly Socket client;
         private readonly IPEndPoint publicEndPoint;
 
-        internal ForwarderProbe()
+        /// <summary>
+        ///     Supply <paramref name="timeProvider"/> to drive the forwarder's grace and idle timeouts from a test-controlled clock; the tests that assert real wall-clock behaviour omit it and get the system clock.
+        /// </summary>
+        internal ForwarderProbe(TimeProvider? timeProvider = null)
         {
+            TimeProvider clock = timeProvider ?? TimeProvider.System;
+
             int publicPort = FreeUDPPort();
 
             server = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -495,8 +624,8 @@ public sealed class UDPForwarderTests
 
             int localPort = server.LocalEndPoint is IPEndPoint boundServer ? boundServer.Port : throw new InvalidOperationException("Could Not Determine The Bound UDP Port");
 
-            Scores = new ViolationScoreContainer(TimeProvider.System);
-            Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, NullLogger.Instance);
+            Scores = new ViolationScoreContainer(clock);
+            Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, clock, NullLogger.Instance);
 
             run = Forwarder.Run(lifetime.Token);
 
