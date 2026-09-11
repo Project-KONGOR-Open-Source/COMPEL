@@ -4,7 +4,20 @@ Companion to `2026-09-10-proxy-abuse-protection-design.md`. Everything here was 
 
 Nothing here blocks the abuse protection from being an improvement on the transparent relay it replaced. Item 1 is the only one that is worse than that baseline, and it is the one to read first.
 
-## What to do, in what order
+## Triage
+
+Every item below is in one of three containers. Nothing here blocks the feature shipping.
+
+**MUST HAVE — items 1, 2, 5, 8.** These are the ones where doing nothing leaves a hole a hostile source can walk through today. They have their own plan: `docs/superpowers/plans/2026-09-11-proxy-hostile-traffic-hardening.md`. Item 5 rides with item 1 because it closes half of it and costs half a task; item 8 rides with item 2 because gating admission on the indicator is the only reason to make it live.
+
+**NICE TO HAVE — items 4, 10.** Neither changes behaviour; both change how much the next change can be trusted. Recorded as `TODO` comments at the code sites they concern rather than only here, because that is where someone will be standing when it matters. Item 10 — extracting the pipeline out of `UDPForwarder.Run` — is the highest-leverage thing in this document: several defects on the original branch were reachable only through a live loopback socket because the pipeline is inline.
+
+**SKIP — items 3, 7, 9.** Declined with reasons, recorded so they are not rediscovered and re-argued. Item 3 (per-forwarder challenge retention) is covered in effect by the per-session grace, which works and is tested; replacing it would be churn. Item 9 (parallelising the maintenance loop) only bites under the uncapped-session condition that the must-have plan removes. Item 7 (enforcing the game-command quota) cannot be done without the netcmd parsing in item 6, so it rides with that TODO.
+
+**A PROJECT OF ITS OWN — item 6.** Watermark, packet-type and netcmd validation stays a `TODO` in the code. It is the reference's highest-value anti-cheat signal and the highest false-positive risk in the whole area, needs `game_data_protocol.h` ported and a region setting COMPEL has no equivalent for, and deserves its own spec rather than being appended to this.
+
+## Effort, for the record
+
 
 Effort is given in **tasks**, where a task is one focused change with its own tests and its own review — roughly what fits comfortably in one sitting. Nothing here is required before the feature ships.
 
