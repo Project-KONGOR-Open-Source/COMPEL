@@ -2870,7 +2870,7 @@ git commit -m "Take The Challenge Timestamp From The Clock And Repeat It Each Se
 
 `Drop` clears the map when it passes the limit, which discards the entry it has just added **and every other**, so the next refusal from an already-reported source is reported again. A round-robin across more than `ReportedDropLimit` distinct endpoints therefore logs once per refusal indefinitely, and each log call is synchronous on the receive loop. Both orderings of the check have this; clearing is the problem, not where the check sits.
 
-Replace the count-and-clear with a bound that simply stops reporting, and track the size in a plain field so the hot path never calls `ConcurrentDictionary.Count`, which acquires every lock in the table:
+Replace the count-and-clear with a bound that simply stops reporting, and track the size in a plain field so the hot path never calls `ConcurrentDictionary.Count`, which acquires every lock in the table. `Drop` is reached only from the forwarder's single receive loop, so the check and the increment cannot interleave with each other and the bound cannot be overshot:
 
 ```csharp
     // No Reference "#define" To Cite: The Reference Bounds Its Own Maps With A Bare Literal Of A Thousand. Reporting Stops At The Bound Rather Than Clearing, Because Clearing Would Un-Throttle Every Source Already Reported And Turn A Flood Into A Log Flood
@@ -2904,7 +2904,16 @@ In `EvictIdleSessions`, keep the count in step when a report is reclaimed with i
 
 - [ ] **Step 2: Widen the drop counters**
 
-`droppedDatagramCount` in both `UDPForwarder` and `UDPProxyService`, the two properties that expose them, the loop's local sum, `droppedDatagramsAtWindowStart`, and `ProxyDroppedDatagramCount` on `StatusResponse` all become `long`. `Interlocked.Increment` and `Volatile.Read`/`Write` all have `long` overloads, so the shape does not change.
+Every one of these becomes `long`, and the list is exhaustive - check it against a grep rather than trusting it:
+
+- `UDPForwarder.droppedDatagramCount` and the `DroppedDatagramCount` property over it.
+- `UDPProxyService.droppedDatagramCount`, `droppedDatagramsAtWindowStart`, its `DroppedDatagramCount` property, the loop's local `droppedDatagrams` sum, and `droppedThisWindow`.
+- `ProxyDroppedDatagramCount` on `StatusResponse`. The named-argument alignment at the construction site does not move, because the name is unchanged.
+- `refusedBefore` in the `Refuses` helper in `UDPForwarderTests.cs`, which captures the property.
+
+`Interlocked.Increment` and `Volatile.Read`/`Write` all have `long` overloads, so the shape does not change, and `UnderAttackThreshold` stays an `int` because comparing it against a `long` widens implicitly.
+
+Keep the `Interlocked.Increment` on the forwarder's counter even though `Drop` is only ever called from the single receive loop: the value is read from the control-plane thread and from the maintenance loop, so the increment and the `Volatile.Read` are a pair.
 
 At a gigabit of minimum-size datagrams an `int` aggregate passes two billion in about half an hour, after which the window delta goes negative, `IsUnderAttack` reports **false** while the attack is at its peak, and `/status` reports a negative count.
 
