@@ -2854,7 +2854,7 @@ git commit -m "Take The Challenge Timestamp From The Clock And Repeat It Each Se
 
 ---
 
-### Task 10: Bound The Drop Reports, Widen The Counters, And Pin The Advertised Quota
+### Task 10: Bound The Repeat And The Drop Reports, Widen The Counters, And Pin What Nothing Observes
 
 **Files:**
 - Modify: `source/COMPEL/Services/Proxy/UDPForwarder.cs`
@@ -2864,7 +2864,7 @@ git commit -m "Take The Challenge Timestamp From The Clock And Repeat It Each Se
 - Modify: `docs/superpowers/specs/2026-09-10-proxy-abuse-protection-design.md`
 - Test: `source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs`
 
-**Why this task exists.** Four more findings from the final review, none of them player-facing but all of them real.
+**Why this task exists.** Four findings from the whole-branch review, plus five from the Task 9 review - including one regression Task 9 itself introduced and two comments it falsified. Only the backwards-clock case is player-facing, but all are real.
 
 - [ ] **Step 1: Stop the drop-report map from un-throttling itself**
 
@@ -2958,16 +2958,137 @@ Transposing the two quota writes in `BuildChallengePacket` passes every existing
 - The spec's scope item 4 says the proxy advertises **and enforces** per-kind quotas. The game-command quota is advertised but not enforced, because the netcmd parsing it would need is deferred. Say so.
 - The `ChallengeExpirySeconds` note in the spec calls sixty seconds "a deliberate safety margin, not a fault". With an unmatched challenge now refused, a longer expiry is a longer window in which a client echoes something this proxy may not know. Reframe it as the trade-off it is, and note that Task 9's per-second repeat is what makes it safe.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Repeat the challenge only to a session that has authenticated**
+
+Task 9's per-second repeat multiplied an existing reflection vector. `GetOrCreateSession` and `SendChallenge` run before the length guard and before the allowance check, so any datagram from a novel source endpoint creates a session, and `RepeatChallenges` then sends that session a challenge every second until the idle sweep removes it two minutes later. One spoofed 29-byte datagram carrying a victim's address therefore produces roughly 120 challenge datagrams aimed at the victim — about **356 times** wire amplification, against roughly 35 before Task 9.
+
+The reference can afford a one-second repeat because it pairs it with a fifteen-second idle timeout (`MAX_IDLE_TIME`, `main.cpp:42`) and hard caps of `MAX_GAME_CONNECTIONS` 24 and `MAX_GAME_CONNECTIONS_PER_IP` 10 (`main.cpp:53-56`). COMPEL has none of those, so the repeat needs its own bound.
+
+The bound is the one the repeat already implies: only a session that has **authenticated** needs it. Fix 3 exists for a client that loses a *rotation* challenge while mid-window, and such a client is authenticated by definition. A session that has never authenticated falls back to one challenge per rotation, which is exactly what it received before Task 9 — so this is not a regression for a real client whose first challenge is lost, and it takes the amplification **below** the pre-Task-9 level rather than merely back to it.
+
+Expose the flag the grace already tracks, and express the grace in terms of it:
+
+```csharp
+        public bool HasAuthenticated => Volatile.Read(ref authenticated);
+
+        public bool IsWithinUnknownChallengeGrace
+            => HasAuthenticated is false && Environment.TickCount64 - createdTicks < UnknownChallengeGraceMilliseconds;
+```
+
+Then gate the repeat:
+
+```csharp
+    public void RepeatChallenges()
+    {
+        foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+        {
+            // Only A Session That Has Authenticated Needs This: The Repeat Exists For A Client That Lost A Rotation Challenge Mid-Window, Which Is Authenticated By Definition
+            // Repeating To Every Session Instead Turns One Spoofed Datagram Into A Challenge Every Second Aimed At Whatever Address It Named, For As Long As The Session Lives
+            if (pair.Value.HasAuthenticated is false)
+                continue;
+
+            if (pair.Value.Challenges.Current is ChallengeWindow current)
+                TransmitChallenge(pair.Key, current.Challenge);
+        }
+    }
+```
+
+Add a TODO beside it recording what remains: the session table itself has no cap, so a spoofed-source flood still buys a socket, a pump task and a two-minute lifetime per datagram. That is pre-existing, and the reference bounds it with the connection caps above, which COMPEL would need a policy for.
+
+- [ ] **Step 6: Make the challenge timestamp immune to a backwards clock**
+
+`TransmitChallenge` takes the timestamp from the wall clock, which is faithful to the reference (`main.cpp:1222` is also `time(NULL)`). But the client's gate is a strict comparison it never re-bases, so a clock stepping **backwards** by Δ — an NTP correction above 128 milliseconds, or a virtual machine resuming — makes the client reject every replacement challenge for Δ seconds. Once its retained history ages out, its own traffic is charged 100 a datagram and it is actioned in well under a second.
+
+One line removes it, without leaving wall-clock semantics:
+
+```csharp
+    private long lastIssuedTimestamp;
+```
+
+```csharp
+        // The Client's Gate Is A Strict Comparison It Never Re-Bases, So A Clock That Steps Backwards Would Have It Reject Every Replacement Until The Clock Caught Up
+        // Never Issuing A Timestamp Below The Last One Keeps The Sequence Monotonic Across A Backwards Step While Still Being Wall-Clock Derived, So A Restart Still Issues A Greater Value Than A Previous Run
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        long monotonic = Math.Max(Interlocked.Read(ref lastIssuedTimestamp) + 1, now);
+
+        Interlocked.Exchange(ref lastIssuedTimestamp, monotonic);
+
+        byte[] packet = BuildChallengePacket((uint)monotonic, challenge);
+```
+
+Note this must not be applied to a repeat, which deliberately reuses the current challenge *value*; a repeat with a fresh timestamp is what lets a same-second rotation self-heal, so leave `TransmitChallenge` shared and let the timestamp advance on every send.
+
+- [ ] **Step 7: Correct the two comments this work falsified**
+
+Task 9 separated the challenge value from the creation timestamp, which falsified both of these.
+
+In `UDPProxyService`, the deferred-work TODO says randomising the challenge "means separating the challenge from the creation timestamp, which currently share one value in `BuildChallengePacket`, so it is deliberately left alone here". They no longer share one value. Replace that line with one saying the coupling is gone and randomising is now a self-contained change, so the next reader is not told to avoid work this commit made cheap.
+
+In `UDPForwarder`, the comment above `challengeSequence` says "a single monotonically-increasing sequence drives both fields". It drives one field now. Say what the sequence is for — the challenge value, which must differ from the previous one — and note that the timestamp comes from the clock.
+
+- [ ] **Step 8: Fix the timestamp test, which passes by luck**
+
+`The_Challenge_Timestamp_Comes_From_The_Wall_Clock` samples `before` **after** `probe.Relays(...)`, but the challenge it then reads was built inside that call. So `timestamp <= before` always holds, and `IsGreaterThanOrEqualTo(before)` passes only when no wall-clock second boundary falls in the gap — and fails outright if the loopback datagram to the server is dropped, because the receive timeout puts two seconds between the two samples.
+
+Hoist the sample above the call, and assert the call succeeded so a dropped datagram fails for the right reason:
+
+```csharp
+        uint before = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        await Assert.That(await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0))).IsTrue();
+
+        uint timestamp = await ReadOneChallengeTimestamp(probe.Forwarder, probe.Client);
+
+        uint after = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+```
+
+While there, collapse `ReadOneChallengeTimestamp` and `ReadOneChallengeValue` onto a shared `ReadOneChallengePacket` — Step 3 needs the packet itself anyway, and three copies of the same retry loop is two too many.
+
+- [ ] **Step 9: Pin the maintenance cadence, which nothing observes**
+
+`MaintenanceInterval`, `MaintenancePassesPerRotation` and `UnderAttackWindowPasses` are unobserved by any test, and getting the middle one wrong is not a cosmetic error. Set `MaintenancePassesPerRotation` to 1 — the obvious misreading of that loop — and every test still passes, while `SessionChallengeState.UnauthenticatedResetRotations` then resets the pre-authentication window every three seconds instead of every thirty, handing an unauthenticated source a hundred packets per three seconds rather than per thirty.
+
+That cross-class coupling is why this earns a test where the under-attack window's derivation alone did not: the rotation cadence is load-bearing for a constant in another type, so the derivation being self-consistent is not enough.
+
+Make `ChallengeRenewalInterval`, `MaintenanceInterval`, `MaintenancePassesPerRotation` and `UnderAttackWindowPasses` `internal static readonly`, and add `source/COMPEL.Tests/Services/Proxy/UDPProxyServiceTests.cs`:
+
+```csharp
+namespace COMPEL.Tests.Services.Proxy;
+
+/// <summary>
+///     Verifies the derived cadences of the proxy's maintenance loop, which no behavioural test reaches and whose breakage is silent.
+/// </summary>
+public sealed class UDPProxyServiceTests
+{
+    // A Rotation Is What Resets A Client's Counter And What Ages The Retained Challenge History, So Its Cadence Is Load-Bearing Well Beyond The Challenge Itself
+    [Test]
+    public async Task The_Rotation_Cadence_Is_The_Challenge_Renewal_Interval()
+    {
+        TimeSpan rotation = UDPProxyService.MaintenanceInterval * UDPProxyService.MaintenancePassesPerRotation;
+
+        await Assert.That(rotation).IsEqualTo(UDPProxyService.ChallengeRenewalInterval);
+    }
+
+    [Test]
+    public async Task The_Under_Attack_Window_Is_Five_Minutes()
+    {
+        TimeSpan window = UDPProxyService.MaintenanceInterval * UDPProxyService.UnderAttackWindowPasses;
+
+        await Assert.That(window).IsEqualTo(TimeSpan.FromMinutes(5));
+    }
+}
+```
+
+- [ ] **Step 10: Run the tests to verify they pass**
 
 Run: `dotnet build source/COMPEL.slnx && dotnet test source/COMPEL.slnx`
 Expected: build succeeds with 0 warnings; every test passes.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add source/COMPEL/Services/Proxy source/COMPEL/Endpoints/Contracts.cs source/COMPEL.Tests/Services/Proxy/UDPForwarderTests.cs docs/superpowers/specs/2026-09-10-proxy-abuse-protection-design.md
-git commit -m "Bound The Drop Reports And Widen The Datagram Counters"
+git add source/COMPEL/Services/Proxy source/COMPEL/Endpoints/Contracts.cs source/COMPEL.Tests/Services/Proxy docs/superpowers/specs/2026-09-10-proxy-abuse-protection-design.md
+git commit -m "Repeat Challenges Only To Authenticated Sessions And Bound The Drop Reports"
 ```
 
 ---
