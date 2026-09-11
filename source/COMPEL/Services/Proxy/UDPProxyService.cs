@@ -13,7 +13,9 @@ public sealed class UDPProxyService : BackgroundService
     private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
 
     // "MAX_IDLE_TIME": A Session That Has Never Authenticated Is Swept Far Sooner Than One Carrying A Real Match, Because Any Datagram From A Novel Source Creates One And The Repeat Above Then Transmits To It Every Second
-    // This Is The Bound The Reference Uses, And It Is Why The Reference Can Repeat To Every Connection Unconditionally
+    // Eviction Only Runs On A Rotating Pass, So The Effective Unauthenticated Lifetime Is Fifteen To Twenty-Five Seconds Rather Than Exactly Fifteen
+    // This Timeout Is What Makes Repeating To Every Session Affordable, Not What Bounds It: The Reference's Own Bound Also Includes "MAX_GAME_CONNECTIONS" (24), "MAX_GAME_CONNECTIONS_PER_IP" (10), And Refusing New Connections While Its Own Under-Attack Indicator Is Over Threshold
+    // TODO: COMPEL Has None Of Those Caps, So A Spoofed-Source Flood Still Buys A Socket And A Pump Task Per Datagram For Up To The Unauthenticated Lifetime Above, Which COMPEL Would Need A Policy For
     private static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
 
     // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
@@ -176,8 +178,9 @@ public sealed class UDPProxyService : BackgroundService
                 // A Rotation Sends The New Challenge Itself, So There Is Nothing To Repeat On That Pass
                 if (rotating)
                 {
-                    forwarder.RotateChallenges();
+                    // Eviction Runs First: A Session Evicted Immediately After Being Sent A Challenge Would Have Its Replacement Rejected, Because A Recreated Session's Floor Starts Fresh And Would Stamp The Same Wall-Clock Second, Which The Client Refuses As Not Strictly Greater
                     forwarder.EvictIdleSessions(IdleSessionTimeout, UnauthenticatedSessionTimeout);
+                    forwarder.RotateChallenges();
                 }
 
                 else
