@@ -285,6 +285,7 @@ public sealed class UDPForwarderTests
 
     // The Mark Advanced On Every Transmit Rather Than Per Challenge, So It Ran Ahead Of The Clock At One Per Session Per Second And A Restart Then Issued Timestamps The Client Rejected As Old
     // One Challenge From A Fresh Forwarder Cannot See That, Which Is Why The Original Test Passed Against It
+    // A Second Session Is What Distinguishes A Per-Session Floor From A Forwarder-Level One That Merely Advances On Value Rather Than On Transmit; One Session Alone Cannot Tell The Two Apart
     [Test]
     public async Task The_Challenge_Timestamp_Does_Not_Drift_Ahead_Of_The_Clock()
     {
@@ -294,11 +295,18 @@ public sealed class UDPForwarderTests
 
         await Assert.That(await probe.Relays(GameDatagram(issued, counter: 0))).IsTrue();
 
+        // A Second, Independent Session On The Same Forwarder And Public Port
+        using Socket otherClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        otherClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+        await otherClient.SendToAsync(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0), SocketFlags.None, new IPEndPoint(IPAddress.Loopback, probe.Forwarder.PublicPort));
+
         // Far More Transmits Than Wall-Clock Seconds Will Pass During Them
         for (int repeat = 0; repeat < 50; repeat++)
             probe.Forwarder.RepeatChallenges();
 
         await DrainUntilIdle(probe.Client);
+        await DrainUntilIdle(otherClient);
 
         probe.Forwarder.RotateChallenges();
 

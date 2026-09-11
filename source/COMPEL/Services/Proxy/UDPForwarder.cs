@@ -106,9 +106,6 @@ internal sealed class UDPForwarder : IDisposable
                 if (Drop(client, "Session Creation Failed"))
                     logger.LogDebug(exception, "Failed To Create Proxy Session For {Client}", client);
 
-                // No Session Is Ever Created On This Path, So Nothing Would Ever Evict The Entry Just Added And It Would Consume Its Reported-Drop Slot For The Rest Of The Process's Life; Releasing It Immediately Keeps The Budget For Sessions Whose Eviction Naturally Frees It
-                ReleaseDropReport(client);
-
                 continue;
             }
 
@@ -202,7 +199,7 @@ internal sealed class UDPForwarder : IDisposable
     {
         foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
             if (pair.Value.Challenges.Current is ChallengeWindow current)
-                TransmitChallenge(pair.Key, current.Challenge, pair.Value.IssuedTimestamp);
+                TransmitChallenge(pair.Key, current.Challenge, Volatile.Read(ref pair.Value.IssuedTimestamp));
     }
 
     private void SendChallenge(IPEndPoint client, ClientSession session)
@@ -215,9 +212,12 @@ internal sealed class UDPForwarder : IDisposable
 
         // Rotation Must Happen Before The Challenge Is Sent, So A Reply Arriving The Instant After Send Is Already Matched
         session.Challenges.Rotate(sequence, packetQuota);
-        session.IssuedTimestamp = session.NextIssuedTimestamp();
 
-        TransmitChallenge(client, sequence, session.IssuedTimestamp);
+        uint issuedTimestamp = session.NextIssuedTimestamp();
+
+        Volatile.Write(ref session.IssuedTimestamp, issuedTimestamp);
+
+        TransmitChallenge(client, sequence, issuedTimestamp);
     }
 
     private void TransmitChallenge(IPEndPoint client, uint challenge, uint serverCreationTimestamp)
@@ -392,6 +392,12 @@ internal sealed class UDPForwarder : IDisposable
                 }
             }
         }
+
+        // A Report Entry Can Outlive Its Session: The Creation-Failure Path Never Had One, And A Datagram Can Be Refused For A Session Evicted Underneath It
+        // Reclaiming Them Here Bounds The Budget Without Releasing A Throttle That Is Still Doing Its Job, Which Is What Releasing On The Failure Path Did
+        foreach (KeyValuePair<IPEndPoint, bool> report in reportedDrops)
+            if (sessions.ContainsKey(report.Key) is false)
+                ReleaseDropReport(report.Key);
     }
 
     public void Dispose()
@@ -457,9 +463,9 @@ internal sealed class UDPForwarder : IDisposable
         public uint NextIssuedTimestamp()
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            long monotonic = Math.Max(lastIssuedTimestamp + 1, now);
+            long monotonic = Math.Max(Interlocked.Read(ref lastIssuedTimestamp) + 1, now);
 
-            lastIssuedTimestamp = monotonic;
+            Interlocked.Exchange(ref lastIssuedTimestamp, monotonic);
 
             return (uint)monotonic;
         }
