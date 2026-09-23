@@ -17,6 +17,7 @@ public sealed class UDPForwarderTests
         int localPort = FreeUDPPort();
 
         using Socket server = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
         server.Bind(new IPEndPoint(IPAddress.Loopback, localPort));
 
         ViolationScoreContainer container = new (TimeProvider.System);
@@ -25,11 +26,13 @@ public sealed class UDPForwarderTests
         using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, attackIndicator, TimeProvider.System, NullLogger.Instance);
 
         using CancellationTokenSource lifetime = new ();
+
         Task run = forwarder.Run(lifetime.Token);
 
         try
         {
             using Socket client = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
             client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
             IPEndPoint publicEndPoint = new (IPAddress.Loopback, publicPort);
@@ -108,6 +111,7 @@ public sealed class UDPForwarderTests
         using UDPForwarder forwarder = new (publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), container, attackIndicator, TimeProvider.System, NullLogger.Instance);
 
         using CancellationTokenSource lifetime = new ();
+
         Task run = forwarder.Run(lifetime.Token);
 
         try
@@ -122,9 +126,11 @@ public sealed class UDPForwarderTests
             await DrainUntilIdle(client);
 
             forwarder.RotateChallenges();
+
             uint firstValue = await ReadOneChallengeValue(forwarder, client);
 
             forwarder.RotateChallenges();
+
             uint secondValue = await ReadOneChallengeValue(forwarder, client);
 
             using (Assert.Multiple())
@@ -289,6 +295,7 @@ public sealed class UDPForwarderTests
     public async Task Rotate_Challenges_In_Same_Second_Produces_Strictly_Increasing_Timestamp_For_Session()
     {
         ControllableTimeProvider clock = new ();
+
         await using ForwarderProbe probe = new (clock);
 
         await Assert.That(await probe.Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0))).IsTrue();
@@ -317,6 +324,7 @@ public sealed class UDPForwarderTests
 
         // A Second, Independent Session On The Same Forwarder And Public Port
         using Socket otherClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
         otherClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
         await otherClient.SendToAsync(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0), SocketFlags.None, new IPEndPoint(IPAddress.Loopback, probe.Forwarder.PublicPort));
@@ -588,12 +596,15 @@ public sealed class UDPForwarderTests
         await using ForwarderProbe probe = new ();
 
         uint session1FirstChallenge = await probe.Establish();
+
         await Assert.That(await probe.Relays(GameDatagram(session1FirstChallenge, counter: 0))).IsTrue();
 
         using Socket client2 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
         client2.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
         IPEndPoint publicEndPoint = new (IPAddress.Loopback, probe.Forwarder.PublicPort);
+
         await client2.SendToAsync(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0), SocketFlags.None, publicEndPoint);
 
         await DrainUntilIdle(probe.Client);
@@ -624,21 +635,25 @@ public sealed class UDPForwarderTests
                 for (int sessionIndex = 0; sessionIndex < 8; sessionIndex++)
                 {
                     Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
                     clientSocket.Bind(new IPEndPoint(ipAddress, 0));
                     clients.Add(clientSocket);
 
                     byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
+
                     await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
                 }
             }
 
             using Socket client25 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
             client25.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.4"), 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
 
             await Assert.That(await probe.RefusesFrom(client25, overflowDatagram)).IsTrue();
         }
+
         finally
         {
             foreach (Socket clientSocket in clients)
@@ -652,6 +667,7 @@ public sealed class UDPForwarderTests
         await using ForwarderProbe probe = new ();
 
         List<Socket> clients = new ();
+
         try
         {
             IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
@@ -659,25 +675,32 @@ public sealed class UDPForwarderTests
             for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
             {
                 Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
                 clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
                 clients.Add(clientSocket);
 
                 byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
+
                 await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
             }
 
             using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
             client11.Bind(new IPEndPoint(ipAddress1, 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+
             await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
 
             using Socket clientOtherIP = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
             clientOtherIP.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0));
 
             byte[] otherIPDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+
             await Assert.That(await probe.RelaysFrom(clientOtherIP, otherIPDatagram)).IsTrue();
         }
+
         finally
         {
             foreach (Socket clientSocket in clients)
@@ -689,9 +712,11 @@ public sealed class UDPForwarderTests
     public async Task An_Evicted_Session_Releases_Its_Session_Slot()
     {
         ControllableTimeProvider clock = new ();
+
         await using ForwarderProbe probe = new (clock);
 
         List<Socket> clients = new ();
+
         try
         {
             IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
@@ -699,17 +724,21 @@ public sealed class UDPForwarderTests
             for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
             {
                 Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
                 clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
                 clients.Add(clientSocket);
 
                 byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
+
                 await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
             }
 
             using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
             client11.Bind(new IPEndPoint(ipAddress1, 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
+
             await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
 
             clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout);
@@ -717,6 +746,7 @@ public sealed class UDPForwarderTests
 
             await Assert.That(await probe.RelaysFrom(client11, overflowDatagram)).IsTrue();
         }
+
         finally
         {
             foreach (Socket clientSocket in clients)
@@ -732,6 +762,7 @@ public sealed class UDPForwarderTests
         probe.AttackIndicator.Charge(AttackIndicatorContainer.UnderAttackThreshold + 100);
 
         using Socket newClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
         newClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
         byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
@@ -745,6 +776,7 @@ public sealed class UDPForwarderTests
         await using ForwarderProbe probe = new ();
 
         uint challenge = await probe.Establish();
+
         await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
 
         probe.AttackIndicator.Charge(AttackIndicatorContainer.UnderAttackThreshold + 100);
@@ -758,6 +790,7 @@ public sealed class UDPForwarderTests
         await using ForwarderProbe probe = new ();
 
         uint challenge = await probe.Establish();
+
         await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
 
         for (int index = 0; index < 40; index++)
@@ -801,14 +834,13 @@ public sealed class UDPForwarderTests
 
     private static async Task DrainUntilIdle(Socket socket)
     {
-        while (await TryReceive(socket) is not null)
-        {
-        }
+        while (await TryReceive(socket) is not null) { }
     }
 
     private static async Task<(byte[] Payload, EndPoint Sender)?> TryReceive(Socket socket)
     {
         byte[] buffer = new byte[65535];
+
         EndPoint sender = new IPEndPoint(IPAddress.Any, 0);
 
         using CancellationTokenSource timeout = new (ReceiveTimeout);
@@ -927,6 +959,7 @@ public sealed class UDPForwarderTests
             await Relays(GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0));
 
             byte[] packet = await ReadOneChallengePacket(Forwarder, client);
+
             ClientChallenges.TryProcessChallengePacket(publicEndPoint, packet);
 
             return ChallengeValue(packet);
@@ -938,6 +971,7 @@ public sealed class UDPForwarderTests
         internal async Task<uint> ReceiveAndStoreChallenge()
         {
             byte[] packet = await ReadOneChallengePacket(Forwarder, client);
+
             ClientChallenges.TryProcessChallengePacket(publicEndPoint, packet);
 
             return ChallengeValue(packet);

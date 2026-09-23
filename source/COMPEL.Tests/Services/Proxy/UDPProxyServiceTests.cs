@@ -58,6 +58,7 @@ public sealed class UDPProxyServiceTests
         UDPProxyService service = new (Options.Create(options), new PortPlan(options), NullLogger<UDPProxyService>.Instance);
 
         using CancellationTokenSource lifetime = new ();
+
         Task executeTask = service.StartAsync(lifetime.Token);
 
         try
