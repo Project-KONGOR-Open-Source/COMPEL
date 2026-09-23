@@ -30,6 +30,7 @@ public sealed class SessionChallengeStateTests
         state.Rotate(challenge: 100, quota: 64);
 
         ChallengeWindow? first = state.Match(100);
+
         first?.TryAdmit(7, out _);
 
         state.Rotate(challenge: 200, quota: 64);
@@ -148,10 +149,8 @@ public sealed class SessionChallengeStateTests
         for (int index = 0; index < 50; index++)
         {
             uint challenge;
-            do
-            {
-                challenge = RandomUInt32();
-            }
+
+            do { challenge = RandomUInt32(); }
             while (state.ContainsChallenge(challenge));
 
             await Assert.That(state.ContainsChallenge(challenge)).IsFalse();
@@ -174,7 +173,9 @@ public sealed class SessionChallengeStateTests
     private static uint RandomUInt32()
     {
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
+
         RandomNumberGenerator.Fill(bytes);
+
         return BinaryPrimitives.ReadUInt32LittleEndian(bytes);
     }
 }
