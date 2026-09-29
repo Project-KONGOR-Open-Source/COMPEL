@@ -15,6 +15,9 @@ public static class AddressValidation
 
         string trimmed = rawURL.Trim();
 
+        if (trimmed.StartsWith("::1", StringComparison.OrdinalIgnoreCase) && (trimmed.Length == 3 || trimmed[3] is '/' or ':'))
+            trimmed = $"[::1]{trimmed[3..]}";
+
         string urlWithScheme = trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
             ? trimmed
             : IsLoopbackHost(trimmed) ? $"http://{trimmed}" : $"https://{trimmed}";
@@ -36,11 +39,16 @@ public static class AddressValidation
                 return false;
         }
 
-        string? candidateURL = rawAddress.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || rawAddress.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-            ? rawAddress
-            : rawAddress.Contains("://", StringComparison.Ordinal)
+        string candidateAddress = rawAddress;
+
+        if (candidateAddress.StartsWith("::1", StringComparison.OrdinalIgnoreCase) && (candidateAddress.Length == 3 || candidateAddress[3] is '/' or ':'))
+            candidateAddress = $"[::1]{candidateAddress[3..]}";
+
+        string? candidateURL = candidateAddress.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || candidateAddress.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            ? candidateAddress
+            : candidateAddress.Contains("://", StringComparison.Ordinal)
                 ? null
-                : $"http://{rawAddress}";
+                : $"http://{candidateAddress}";
 
         if (candidateURL is null)
             return false;
@@ -59,12 +67,28 @@ public static class AddressValidation
 
     private static bool IsLoopbackHost(string address)
     {
+        if (address.StartsWith('['))
+        {
+            int closingBracketIndex = address.IndexOf(']');
+
+            if (closingBracketIndex > 0)
+            {
+                string bracketedHost = address[..(closingBracketIndex + 1)];
+
+                return bracketedHost.Equals("[::1]", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        if (address.StartsWith("::1", StringComparison.OrdinalIgnoreCase))
+        {
+            if (address.Length == 3 || address[3] is '/' or ':')
+                return true;
+        }
+
         int delimiterIndex = address.IndexOfAny(['/', ':']);
         string host = delimiterIndex >= 0 ? address[..delimiterIndex] : address;
 
         return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
-            || host.Equals("::1", StringComparison.OrdinalIgnoreCase)
-            || host.Equals("[::1]", StringComparison.OrdinalIgnoreCase);
+            || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase);
     }
 }

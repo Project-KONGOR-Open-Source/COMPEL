@@ -30,6 +30,17 @@ public sealed class AddressValidationTests
     }
 
     [Test]
+    public async Task Normalise_CDN_URL_Prepends_HTTP_And_Appends_Trailing_Slash_For_IPv6_Loopback_Address()
+    {
+        using (Assert.Multiple())
+        {
+            await Assert.That(AddressValidation.NormaliseCDNURL("[::1]:5555/cdn")).IsEqualTo("http://[::1]:5555/cdn/");
+            await Assert.That(AddressValidation.NormaliseCDNURL("[::1]")).IsEqualTo("http://[::1]/");
+            await Assert.That(AddressValidation.NormaliseCDNURL("::1")).IsEqualTo("http://[::1]/");
+        }
+    }
+
+    [Test]
     public async Task Normalise_CDN_URL_Preserves_Existing_HTTPS_Scheme_And_Appends_Trailing_Slash()
     {
         string normalised = AddressValidation.NormaliseCDNURL("https://cdn.kongor.net");
@@ -73,6 +84,9 @@ public sealed class AddressValidationTests
             await Assert.That(AddressValidation.IsValidAddress("localhost:5555/cdn")).IsTrue();
             await Assert.That(AddressValidation.IsValidAddress("192.168.1.100:8080")).IsTrue();
             await Assert.That(AddressValidation.IsValidAddress("https://cdn.kongor.net")).IsTrue();
+            await Assert.That(AddressValidation.IsValidAddress("[::1]:5555/cdn")).IsTrue();
+            await Assert.That(AddressValidation.IsValidAddress("[::1]")).IsTrue();
+            await Assert.That(AddressValidation.IsValidAddress("::1")).IsTrue();
         }
     }
 
