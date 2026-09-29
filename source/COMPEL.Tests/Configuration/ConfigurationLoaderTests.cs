@@ -25,6 +25,55 @@ public sealed class ConfigurationLoaderTests
                 await Assert.That(file.ControlPlaneAuthenticationToken.Value).IsEqualTo("...");
                 await Assert.That(file.ControlPlanePort.Value).IsEqualTo(8080);
                 await Assert.That(file.WarmInstancesTarget.Value).IsEqualTo(1);
+                await Assert.That(file.CDN.Value).IsEqualTo("cdn.kongor.net");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task A_CDN_Setting_Explicitly_Set_To_Null_Falls_Back_To_Its_Default()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, """{ "CDN": null }""");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.CDN).IsNotNull();
+                await Assert.That(file.CDN.Value).IsEqualTo("cdn.kongor.net");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task A_Custom_CDN_URL_Round_Trips_Correctly()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, """{ "CDN": { "Value": "http://localhost:5555/cdn" } }""");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.CDN).IsNotNull();
+                await Assert.That(file.CDN.Value).IsEqualTo("http://localhost:5555/cdn");
             }
         }
 

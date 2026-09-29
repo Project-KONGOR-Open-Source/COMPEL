@@ -77,6 +77,7 @@ public static class ConfigurationLoader
         file.UseProxy                        ??= new ();
         file.PortRangeOffset                 ??= new ();
         file.RuntimeArtefactsPath            ??= new ();
+        file.CDN                             ??= new ();
         file.CDNSynchronisation              ??= new ();
         file.ControlPlaneAuthenticationToken ??= new ();
         file.ControlPlanePort                ??= new ();

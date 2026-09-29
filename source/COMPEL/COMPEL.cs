@@ -138,7 +138,11 @@ builder.Services.AddOptions<MatchServerManagerOptions>().Configure(options =>
 
 builder.Services.AddOptions<ControlPlaneOptions>().Configure(options => options.AuthenticationToken = configuration.ControlPlaneAuthenticationToken.Value);
 
-builder.Services.AddOptions<CDNOptions>().Configure(options => options.Synchronisation = configuration.CDNSynchronisation.Value);
+builder.Services.AddOptions<CDNOptions>().Configure(options =>
+{
+    options.Host            = AddressValidation.NormaliseCDNURL(configuration.CDN.Value);
+    options.Synchronisation = configuration.CDNSynchronisation.Value;
+});
 
 // JSON: Source-Generated Serialisation Metadata For The Minimal-API Responses (Required Under Native AOT)
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Insert(0, ControlPlaneJSONContext.Default));
