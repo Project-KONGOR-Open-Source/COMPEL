@@ -120,6 +120,20 @@ public sealed class AddressValidationTests
     }
 
     [Test]
+    public async Task Is_Valid_Address_Returns_False_For_Addresses_With_A_Query_A_Fragment_Or_User_Information()
+    {
+        using (Assert.Multiple())
+        {
+            await Assert.That(AddressValidation.IsValidAddress("cdn.kongor.net?version=1")).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress("cdn.kongor.net?")).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress("https://cdn.kongor.net/cdn?version=1")).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress("cdn.kongor.net#files")).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress("user:password@cdn.kongor.net")).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress("https://user@cdn.kongor.net")).IsFalse();
+        }
+    }
+
+    [Test]
     public async Task Is_Valid_Address_Returns_False_For_Addresses_Containing_Double_Quotes()
     {
         using (Assert.Multiple())
