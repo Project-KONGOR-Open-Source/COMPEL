@@ -160,57 +160,6 @@ public sealed class DistributionSynchronisationService : BackgroundService
     }
 
     /// <summary>
-    ///     Performs a pre-flight connectivity probe against the content delivery network manifest endpoint using an HTTP HEAD request.
-    /// </summary>
-    public async Task<bool> ProbeCDNConnectivity(CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(options.Host))
-        {
-            logger.LogWarning("WARN: CDN Probe Failed: Host Is Empty");
-
-            return false;
-        }
-
-        string host = options.Host.EndsWith('/') ? options.Host : $"{options.Host}/";
-        string probeURL = $"{host}{Variant}/manifest.json";
-
-        logger.LogInformation(@"INIT: Probing CDN Connectivity At ""{ProbeURL}""", probeURL);
-
-        try
-        {
-            using HttpClient client = new ();
-            client.DefaultRequestHeaders.UserAgent.ParseAdd($"COMPEL/{VersionChecker.CurrentVersionDisplay}");
-            client.Timeout = TimeSpan.FromSeconds(5);
-
-            using HttpRequestMessage request = new (HttpMethod.Head, probeURL);
-            using HttpResponseMessage response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-
-            if (response.IsSuccessStatusCode)
-            {
-                logger.LogInformation("INIT: CDN Probe Succeeded (HTTP 200 OK)");
-
-                return true;
-            }
-
-            logger.LogWarning("WARN: CDN Probe Failed: HTTP {StatusCode}", (int) response.StatusCode);
-
-            return false;
-        }
-
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-
-        catch (Exception exception)
-        {
-            logger.LogWarning("WARN: CDN Probe Failed: {Reason}", exception.Message);
-
-            return false;
-        }
-    }
-
-    /// <summary>
     ///     Fetches the manifest and synchronises the installation directory, logging each step in WILLOWMAKER's vocabulary. Safe to call concurrently; calls are serialised.
     ///     Every failure is logged here before it propagates, so the start-up loop and the control plane only decide what to do next.
     /// </summary>
@@ -231,8 +180,6 @@ public sealed class DistributionSynchronisationService : BackgroundService
         try
         {
             SynchronisationState = "Synchronising";
-
-            await ProbeCDNConnectivity(cancellationToken).ConfigureAwait(false);
 
             logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN", Variant);
 
