@@ -36,7 +36,6 @@ public sealed class AddressValidationTests
         {
             await Assert.That(AddressValidation.NormaliseCDNURL("[::1]:5555/cdn")).IsEqualTo("http://[::1]:5555/cdn/");
             await Assert.That(AddressValidation.NormaliseCDNURL("[::1]")).IsEqualTo("http://[::1]/");
-            await Assert.That(AddressValidation.NormaliseCDNURL("::1")).IsEqualTo("http://[::1]/");
         }
     }
 
@@ -86,7 +85,26 @@ public sealed class AddressValidationTests
             await Assert.That(AddressValidation.IsValidAddress("https://cdn.kongor.net")).IsTrue();
             await Assert.That(AddressValidation.IsValidAddress("[::1]:5555/cdn")).IsTrue();
             await Assert.That(AddressValidation.IsValidAddress("[::1]")).IsTrue();
-            await Assert.That(AddressValidation.IsValidAddress("::1")).IsTrue();
+        }
+    }
+
+    [Test]
+    public async Task Is_Valid_Address_Returns_False_For_Unbracketed_IPv6_Addresses()
+    {
+        using (Assert.Multiple())
+        {
+            await Assert.That(AddressValidation.IsValidAddress("::1")).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress("::1:5555/cdn")).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task Is_Valid_Address_Returns_False_For_Normalised_Addresses_With_Unsupported_Schemes()
+    {
+        using (Assert.Multiple())
+        {
+            await Assert.That(AddressValidation.IsValidAddress(AddressValidation.NormaliseCDNURL("ftp://cdn.kongor.net"))).IsFalse();
+            await Assert.That(AddressValidation.IsValidAddress(AddressValidation.NormaliseCDNURL("file:///srv/cdn"))).IsFalse();
         }
     }
 
