@@ -85,7 +85,7 @@ public sealed class RuntimeArtefactsPathSetting
 public sealed class CDNSetting
 {
     public string Value { get; set; } = "cdn.kongor.net";
-    public string Description => "The base address or URL of the content delivery network from which the match server distribution is synchronised. Use 'cdn.kongor.net' for the official public CDN, 'localhost:5555/cdn' for local development, or a custom host name, IP address, or URL.";
+    public string Description => "The base address or URL of the content delivery network from which the match server distribution is synchronised. Use 'cdn.kongor.net' for the official public CDN, 'localhost:5555/cdn' for local development, or a custom host name, IP address, or URL. An address without a scheme uses HTTPS, except for 'localhost', '127.0.0.1', and '[::1]' which use HTTP; prefix any other address that serves plain HTTP with 'http://'.";
 }
 
 public sealed class CDNSynchronisationSetting
