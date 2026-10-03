@@ -181,7 +181,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
         {
             SynchronisationState = "Synchronising";
 
-            logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN", Variant);
+            logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN ""{CDN}""", Variant, options.Host);
 
             Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, cancellationToken).ConfigureAwait(false);
 
@@ -251,7 +251,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
     {
         try
         {
-            logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN", Variant);
+            logger.LogInformation(@"INIT: Fetching Manifest For Variant ""{Variant}"" From CDN ""{CDN}""", Variant, options.Host);
 
             Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, cancellationToken).ConfigureAwait(false);
 

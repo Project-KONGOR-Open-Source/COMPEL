@@ -16,6 +16,7 @@ public sealed class ConfigurationFile
     public UseProxySetting UseProxy { get; set; } = new ();
     public PortRangeOffsetSetting PortRangeOffset { get; set; } = new ();
     public RuntimeArtefactsPathSetting RuntimeArtefactsPath { get; set; } = new ();
+    public CDNSetting CDN { get; set; } = new ();
     public CDNSynchronisationSetting CDNSynchronisation { get; set; } = new ();
     public ControlPlaneAuthenticationTokenSetting ControlPlaneAuthenticationToken { get; set; } = new ();
     public ControlPlanePortSetting ControlPlanePort { get; set; } = new ();
@@ -79,6 +80,12 @@ public sealed class RuntimeArtefactsPathSetting
 {
     public string Value { get; set; } = "DEFAULT";
     public string Description => "The base directory beneath which the match server writes its runtime artefacts (e.g. replays, logs). This value is either the 'DEFAULT' alias, which places artefacts beneath the host account's profile (its 'Documents/Heroes of Newerth x64' tree, where everything else is written), or a fully qualified path to use as the base profile directory instead. This setting applies on Windows only; the Linux server build writes to a fixed location ('/opt/hon/config') and ignores it.";
+}
+
+public sealed class CDNSetting
+{
+    public string Value { get; set; } = "cdn.kongor.net";
+    public string Description => "The base address or URL of the content delivery network from which the match server distribution is synchronised. Use 'cdn.kongor.net' for the official public CDN, 'localhost:5555/cdn' for local development, or a custom host name, IP address, or URL. An address without a scheme uses HTTPS, except for 'localhost', '127.0.0.1', and '[::1]' which use HTTP; prefix any other address that serves plain HTTP with 'http://'.";
 }
 
 public sealed class CDNSynchronisationSetting

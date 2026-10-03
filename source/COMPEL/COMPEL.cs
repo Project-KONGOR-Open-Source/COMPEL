@@ -121,6 +121,7 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{configuration.ControlPlanePort.Value}"
 
 // Options: The Host-Facing Settings Come From "COMPEL.json" (Validated At Startup); The Infrastructure Settings Use Built-In Defaults
 builder.Services.AddSingleton<IValidateOptions<MatchServerManagerOptions>, MatchServerManagerOptionsValidator>();
+builder.Services.AddSingleton<IValidateOptions<CDNOptions>, CDNOptionsValidator>();
 
 builder.Services.AddOptions<MatchServerManagerOptions>().Configure(options =>
 {
@@ -138,7 +139,11 @@ builder.Services.AddOptions<MatchServerManagerOptions>().Configure(options =>
 
 builder.Services.AddOptions<ControlPlaneOptions>().Configure(options => options.AuthenticationToken = configuration.ControlPlaneAuthenticationToken.Value);
 
-builder.Services.AddOptions<CDNOptions>().Configure(options => options.Synchronisation = configuration.CDNSynchronisation.Value);
+builder.Services.AddOptions<CDNOptions>().Configure(options =>
+{
+    options.Host            = AddressValidation.NormaliseCDNURL(configuration.CDN.Value);
+    options.Synchronisation = configuration.CDNSynchronisation.Value;
+}).ValidateOnStart();
 
 // JSON: Source-Generated Serialisation Metadata For The Minimal-API Responses (Required Under Native AOT)
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Insert(0, ControlPlaneJSONContext.Default));
@@ -180,6 +185,7 @@ try
 
     // Trigger The Configured Options Validation Before The Host Starts, So A Configuration Problem Is Reported By The Handler Below Instead Of Being Logged As A Host Startup Failure With A Stack Trace
     _ = application.Services.GetRequiredService<IOptions<MatchServerManagerOptions>>().Value;
+    _ = application.Services.GetRequiredService<IOptions<CDNOptions>>().Value;
 
     // Released Explicitly On A Graceful Shutdown; A Crash Or A Forced Kill Still Releases The Underlying File Handle At The Operating-System Level
     application.Lifetime.ApplicationStopping.Register(() => singleInstanceGuard.Dispose());
