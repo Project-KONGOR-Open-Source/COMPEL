@@ -32,14 +32,17 @@ public sealed class UDPPingResponder : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Wait Until The Distribution Is Ready So The Pong Advertises The Correct Version.
+        // Wait Until The Distribution Is Ready So The Pong Advertises The Correct Version
         try { await distribution.WaitUntilReady(stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException) { return; }
 
         int port = ports.PingPort;
 
-        string? templateVersion = distribution.DistributionVersion;
+        string templateVersion = distribution.DistributionVersion;
         byte[] response = BuildResponseTemplate(options.ServerNamePrefix, templateVersion);
+
+        if (templateVersion == DistributionSynchronisationService.UnknownDistributionVersion)
+            logger.LogWarning("The Distribution Version Is Not Known Yet; Pongs Will Advertise {Version} Until It Is Resolved", templateVersion);
 
         using Socket socket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
@@ -88,14 +91,14 @@ public sealed class UDPPingResponder : BackgroundService
             if (result.ReceivedBytes != RequestLength || buffer[43] != PingMarker)
                 continue;
 
-            // Rebuild The Template Whenever The Distribution Version Has Changed Since It Was Last Built, So An On-Demand Synchronisation Is Reflected In Subsequent Pongs Instead Of Being Baked In Forever.
+            // Rebuild The Template Whenever The Distribution Version Has Changed Since It Was Last Built, So An On-Demand Synchronisation Is Reflected In Subsequent Pongs Instead Of Being Baked In Forever
             if (distribution.DistributionVersion != templateVersion)
             {
                 templateVersion = distribution.DistributionVersion;
                 response = BuildResponseTemplate(options.ServerNamePrefix, templateVersion);
             }
 
-            // Echo The Challenge Bytes So Each Pong Is Distinct.
+            // Echo The Challenge Bytes So Each Pong Is Distinct
             response[44] = buffer[44];
             response[45] = buffer[45];
 
@@ -111,14 +114,14 @@ public sealed class UDPPingResponder : BackgroundService
         }
     }
 
-    internal static byte[] BuildResponseTemplate(string serverName, string? version)
+    internal static byte[] BuildResponseTemplate(string serverName, string version)
     {
         byte[] serverNameBytes = Encoding.UTF8.GetBytes(serverName);
 
-        byte[] versionBytes = Encoding.UTF8.GetBytes(version ?? string.Empty);
-        int versionLength = Math.Min(versionBytes.Length, 12);
+        byte[] versionBytes = Encoding.UTF8.GetBytes(version);
+        int versionLength = versionBytes.Length;
 
-        // The Trailing Bytes Beyond The Version Are Part Of The Wire Format And Are Left Zeroed, As In The Original Responder.
+        // The Trailing Bytes Beyond The Version Are Part Of The Wire Format And Are Left Zeroed, As In The Original Responder
         byte[] response = new byte[69 + serverNameBytes.Length + versionLength];
 
         response[42] = UnreliableFlag;

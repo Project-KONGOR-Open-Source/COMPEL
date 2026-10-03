@@ -1,4 +1,4 @@
-# local equivalent of .github/workflows/publish-release.yml
+# local equivalent of .github/workflows/publish-releases.yml
 
 $ErrorActionPreference = 'Stop'
 
@@ -74,6 +74,18 @@ if (Test-Path $PublishDirectory) { Remove-Item $PublishDirectory -Recurse -Force
 & dotnet publish $ProjectPath "-p:PublishProfile=$ProfileName"
 
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish exited with code $LASTEXITCODE" }
+
+# generate default configuration file
+$ExecutableName = if ($IsWindows) { 'COMPEL.exe' } else { 'COMPEL' }
+
+& (Join-Path $PublishDirectory $ExecutableName)
+
+if ($LASTEXITCODE -ne 0) { throw "COMPEL exited with code $LASTEXITCODE" }
+
+if (-not (Test-Path (Join-Path $PublishDirectory 'COMPEL.json'))) { throw 'COMPEL did not generate a default COMPEL.json' }
+
+# the first-run path exits before the logger and the single-instance lock are ever created; fail loudly if that ever changes, rather than ship stray runtime artefacts in the archive
+if ((Test-Path (Join-Path $PublishDirectory 'COMPEL.log')) -or (Test-Path (Join-Path $PublishDirectory 'COMPEL.lock'))) { throw 'COMPEL unexpectedly created runtime artefacts beyond COMPEL.json' }
 
 Get-ChildItem -Path $PublishDirectory -Recurse -File      -Include '*.pdb', '*.dbg' | Remove-Item -Force
 Get-ChildItem -Path $PublishDirectory -Recurse -Directory -Filter  '*.dSYM'         | Remove-Item -Recurse -Force

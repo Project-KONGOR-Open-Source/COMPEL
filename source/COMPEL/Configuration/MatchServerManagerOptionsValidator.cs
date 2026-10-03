@@ -10,7 +10,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
 
     private static readonly string[] SupportedAliases = [ "DEFAULT" ];
 
-    // These Characters Would Corrupt The Manager's "-execute" CVar String: A Double Quote Can Terminate Its Quoted Argument Early, And A Semicolon Is The CVar-Command Separator. A Control Character (For Example A Newline Or Tab) Is Re-Tokenised As Whitespace By The CVar Parser And Silently Truncates The Value, So It Is Rejected Too.
+    // These Characters Would Corrupt The Manager's "-execute" CVar String: A Double Quote Can Terminate Its Quoted Argument Early, And A Semicolon Is The CVar-Command Separator
+    // A Control Character (For Example A Newline Or Tab) Is Re-Tokenised As Whitespace By The CVar Parser And Silently Truncates The Value, So It Is Rejected Too
     private static readonly char[] UnsafeManagerArgumentCharacters = [ '"', ';' ];
 
     public ValidateOptionsResult Validate(string? name, MatchServerManagerOptions options)
@@ -23,8 +24,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         else if (options.UserName.Equals("USERNAME", StringComparison.OrdinalIgnoreCase))
             failures.Add(@"""UserName"" Is Still The Default Placeholder; Set It To A Registered Project KONGOR User");
 
-        else if (ContainsUnsafeManagerArgumentCharacter(options.UserName))
-            failures.Add(@"""UserName"" Must Not Contain A Double Quote, Semicolon, Or Control Character");
+        else if (ContainsUnsafeManagerArgumentCharacter(options.UserName) || ContainsWhitespace(options.UserName))
+            failures.Add(@"""UserName"" Must Not Contain Whitespace, A Double Quote, A Semicolon, Or A Control Character");
 
         if (string.IsNullOrWhiteSpace(options.Password))
             failures.Add(@"""Password"" Must Be Provided");
@@ -32,8 +33,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         else if (options.Password.Equals("PASSWORD", StringComparison.OrdinalIgnoreCase))
             failures.Add(@"""Password"" Is Still The Default Placeholder; Set It To The User's Password");
 
-        else if (ContainsUnsafeManagerArgumentCharacter(options.Password))
-            failures.Add(@"""Password"" Must Not Contain A Double Quote, Semicolon, Or Control Character");
+        else if (ContainsUnsafeManagerArgumentCharacter(options.Password) || ContainsWhitespace(options.Password))
+            failures.Add(@"""Password"" Must Not Contain Whitespace, A Double Quote, A Semicolon, Or A Control Character");
 
         int processorCount = Environment.ProcessorCount;
 
@@ -42,6 +43,12 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
 
         else if (options.Instances > processorCount)
             failures.Add($@"""Instances"" ({options.Instances}) Must Not Exceed The Number Of Logical Processors ({processorCount})");
+
+        if (options.WarmInstancesTarget < 0)
+            failures.Add(@"""WarmInstancesTarget"" Must Not Be Negative");
+
+        else if (options.WarmInstancesTarget > options.Instances)
+            failures.Add($@"""WarmInstancesTarget"" ({options.WarmInstancesTarget}) Must Not Exceed ""Instances"" ({options.Instances})");
 
         if (string.IsNullOrWhiteSpace(options.Gateway))
             failures.Add(@"""Gateway"" Must Be Provided");
@@ -68,7 +75,7 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
             int minimumVoicePort = options.UseProxy ? PortPlan.BaseVoicePort + PortPlan.ProxyPublicOffset : PortPlan.BaseVoicePort;
             int maximumVoicePort = minimumVoicePort + PortPlan.PortRangeWindow;
 
-            // "- 1" Matches "PortPlan.LocalGameEnd"/"LocalVoiceEnd", Whose Highest Port Is "Start + Instances - 1", Not "Start + Instances".
+            // "- 1" Matches "PortPlan.LocalGameEnd"/"LocalVoiceEnd", Whose Highest Port Is "Start + Instances - 1", Not "Start + Instances"
             if (minimumGamePort + options.PortRangeOffset + options.Instances - 1 > maximumGamePort || minimumVoicePort + options.PortRangeOffset + options.Instances - 1 > maximumVoicePort)
                 failures.Add($@"A Port Range Offset Of {options.PortRangeOffset} Causes Ports For {options.Instances} Instance(s) To Bleed Outside Of The Allowed Port Range");
         }
@@ -84,4 +91,7 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
 
     private static bool ContainsUnsafeManagerArgumentCharacter(string value)
         => value.IndexOfAny(UnsafeManagerArgumentCharacters) >= 0 || value.Any(char.IsControl);
+
+    // The Manager's "Set" Command Splits Its Value On Whitespace And Drops The Final Token, Which Is Why The Server Name Carries Workaround Tokens; A Credential Cannot Carry Them, So Whitespace Is Rejected Outright Rather Than Being Silently Truncated
+    private static bool ContainsWhitespace(string value) => value.Any(char.IsWhiteSpace);
 }

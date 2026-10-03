@@ -9,7 +9,6 @@ public static class ControlPlaneEndpoints
     {
         long startTicks = Environment.TickCount64;
 
-        // Anonymous Latency Probe.
         application.MapGet("/ping", () => TypedResults.Ok(new PingResponse("COMPEL", GeneratedVersionInformation.VersionString, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
         RouteGroupBuilder management = application.MapGroup(string.Empty);
@@ -56,6 +55,8 @@ public static class ControlPlaneEndpoints
                 ProxyRunning:              proxy.IsRunning,
                 PingResponderBound:        pingResponder.IsBound,
                 ProxyFailedForwarderCount: proxy.FailedForwarderCount,
+                ProxyDroppedDatagramCount: proxy.DroppedDatagramCount,
+                ProxyIsUnderAttack:        proxy.IsUnderAttack,
                 UptimeSeconds:             (Environment.TickCount64 - startTicks) / 1000.0
             );
 
@@ -64,15 +65,17 @@ public static class ControlPlaneEndpoints
 
         management.MapPost("/sync", IResult (DistributionSynchronisationService distribution, MatchServerManagerSupervisor supervisor, IHostApplicationLifetime lifetime) =>
         {
-            // Synchronising Rewrites The Installation Directory The Manager Runs From. Doing So While The Manager Is Running Would Delete Or Overwrite Files The Live Servers Hold Open (A Sharing Violation On Windows, A Replaced Inode On Linux), So The Manager Must Be Stopped First. Checking The Desired State (Not Just The Live State) Also Rejects The Request When The Manager Has Merely Crashed And The Supervisor Is About To Relaunch It.
+            // Synchronising Rewrites The Installation Directory The Manager Runs From
+            // Doing So While The Manager Is Running Would Delete Or Overwrite Files The Live Servers Hold Open (A Sharing Violation On Windows, A Replaced Inode On Linux), So The Manager Must Be Stopped First
+            // Checking The Desired State (Not Just The Live State) Also Rejects The Request When The Manager Has Merely Crashed And The Supervisor Is About To Relaunch It
             if (supervisor.IsRunning || supervisor.DesiredRunning)
                 return TypedResults.Conflict(new ActionResponse("sync", false, @"The Match Server Manager Must Be Stopped Via ""/instances/stop"" Before Synchronising"));
 
-            // Synchronisation Can Take A While, So It Runs In The Background; The Result Is Observable Via "/status".
+            // Synchronisation Can Take A While, So It Runs In The Background; The Result Is Observable Via "/status"
             _ = Task.Run(async () =>
             {
                 try { await distribution.SynchroniseNow(lifetime.ApplicationStopping).ConfigureAwait(false); }
-                catch { /* The Outcome Is Recorded On The Service's State And The Failure Is Logged Within. */ }
+                catch { /* The Outcome Is Recorded On The Service's State And The Failure Is Logged Within */ }
             });
 
             return TypedResults.Ok(new ActionResponse("sync", true, "Synchronisation Started"));
@@ -82,21 +85,34 @@ public static class ControlPlaneEndpoints
         {
             supervisor.RequestStart();
 
-            return TypedResults.Ok(new ActionResponse("start", true, "Start Requested"));
+            return TypedResults.Ok(new ActionResponse("instances/start", true, "Instances Start Requested"));
         });
 
         management.MapPost("/instances/stop", (MatchServerManagerSupervisor supervisor) =>
         {
             supervisor.RequestStop();
 
-            return TypedResults.Ok(new ActionResponse("stop", true, "Stop Requested"));
+            return TypedResults.Ok(new ActionResponse("instances/stop", true, "Instances Stop Requested"));
         });
 
         management.MapPost("/instances/restart", async (MatchServerManagerSupervisor supervisor, CancellationToken cancellationToken) =>
         {
             await supervisor.RequestRestart(cancellationToken);
 
-            return TypedResults.Ok(new ActionResponse("restart", true, "Restart Requested"));
+            return TypedResults.Ok(new ActionResponse("instances/restart", true, "Instances Restart Requested"));
+        });
+
+        management.MapPost("/proxy/restart", async Task<IResult> (UDPProxyService proxy, CancellationToken cancellationToken) =>
+        {
+            if (proxy.IsEnabled is false)
+                return TypedResults.Conflict(new ActionResponse("proxy/restart", false, "The Proxy Is Disabled In Configuration"));
+
+            bool restarted = await proxy.RequestRestart(cancellationToken);
+
+            if (restarted is false)
+                return TypedResults.Conflict(new ActionResponse("proxy/restart", false, "Failed To Restart The Proxy"));
+
+            return TypedResults.Ok(new ActionResponse("proxy/restart", true, "Proxy Restart Requested"));
         });
 
         return application;

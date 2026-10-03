@@ -1,0 +1,163 @@
+namespace COMPEL.Tests.Configuration;
+
+/// <summary>
+///     Verifies that the configuration file round-trips its values, tolerates a null setting by falling back to its default, and reports malformed JSON as a clean error.
+/// </summary>
+public sealed class ConfigurationLoaderTests
+{
+    private static string TemporaryPath() => Path.Combine(Path.GetTempPath(), $"compel-configuration-{Guid.NewGuid():N}.json");
+
+    [Test]
+    public async Task A_Generated_Default_File_Loads_Back_With_Its_Default_Values()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            ConfigurationLoader.CreateDefault(path);
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.UseProxy.Value).IsTrue();
+                await Assert.That(file.RuntimeArtefactsPath.Value).IsEqualTo("DEFAULT");
+                await Assert.That(file.ControlPlaneAuthenticationToken.Value).IsEqualTo("...");
+                await Assert.That(file.ControlPlanePort.Value).IsEqualTo(8080);
+                await Assert.That(file.WarmInstancesTarget.Value).IsEqualTo(1);
+                await Assert.That(file.CDN.Value).IsEqualTo("cdn.kongor.net");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task A_CDN_Setting_Explicitly_Set_To_Null_Falls_Back_To_Its_Default()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, """{ "CDN": null }""");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.CDN).IsNotNull();
+                await Assert.That(file.CDN.Value).IsEqualTo("cdn.kongor.net");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task A_Custom_CDN_URL_Round_Trips_Correctly()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, """{ "CDN": { "Value": "http://localhost:5555/cdn" } }""");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.CDN).IsNotNull();
+                await Assert.That(file.CDN.Value).IsEqualTo("http://localhost:5555/cdn");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task A_Setting_Explicitly_Set_To_Null_Falls_Back_To_Its_Default()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, """{ "UserName": null }""");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.UserName).IsNotNull();
+                await Assert.That(file.UserName.Value).IsEqualTo("USERNAME");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task Malformed_JSON_Is_Reported_As_An_Invalid_Operation_Rather_Than_A_Raw_Parse_Error()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, "{ this is not valid json");
+
+            bool threw = false;
+
+            try
+            {
+                ConfigurationLoader.Load(path);
+            }
+
+            catch (InvalidOperationException)
+            {
+                threw = true;
+            }
+
+            await Assert.That(threw).IsTrue();
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task An_Unreadable_File_Is_Reported_As_An_Invalid_Operation_Rather_Than_A_Raw_IO_Error()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"compel-configuration-{Guid.NewGuid():N}", "COMPEL.json");
+
+        string? message = null;
+
+        try
+        {
+            ConfigurationLoader.Load(path);
+        }
+
+        catch (InvalidOperationException exception)
+        {
+            message = exception.Message;
+        }
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(message).IsNotNull();
+            await Assert.That(message?.StartsWith(@"""COMPEL.json"" Could Not Be Read")).IsTrue();
+        }
+    }
+}

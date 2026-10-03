@@ -12,23 +12,23 @@
 <Project>
 
     <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
+        <TargetFramework>net11.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <WarningsAsErrors>nullable</WarningsAsErrors>
-        <Version>2.0.0</Version>
+        <Version>2.1.0</Version>
     </PropertyGroup>
 
     <PropertyGroup Condition="'$(Configuration)' != 'Release'">
         <!--
-            Define the "DEVELOPMENT" symbol for every configuration except "Release", so the code can distinguish a development build from a release build.
+            Define The "DEVELOPMENT" Symbol For Every Configuration Except "Release", So The Code Can Distinguish A Development Build From A Release Build
         -->
 
         <DefineConstants>$(DefineConstants);DEVELOPMENT</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
-        <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt"/>
+        <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols*.txt"/>
     </ItemGroup>
 
 </Project>

@@ -49,7 +49,7 @@ public sealed class MaintenanceService : BackgroundService
             if (parent is null)
                 continue;
 
-            // The Replay's Working Directory Shares The File's Name With The "M" Characters Removed, As In The Original Maintenance Loop.
+            // The Replay's Working Directory Shares The File's Name With The "M" Characters Removed, As In The Original Maintenance Loop
             string replayDirectory = Path.Combine(parent, Path.GetFileNameWithoutExtension(file).Replace("M", string.Empty));
 
             if (Directory.Exists(replayDirectory) is false)

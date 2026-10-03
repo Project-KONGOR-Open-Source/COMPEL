@@ -6,53 +6,57 @@ namespace COMPEL.Services.Supervision;
 public static class ManagerArguments
 {
     /// <summary>
-    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port".
+    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-mod", "base;game;server".
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
     public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort)
     {
         int processorCount = Environment.ProcessorCount;
 
-        // The Order Of These Settings Is Immaterial: Each "Set" Command Is Applied Independently By The Manager.
+        // The Order Of These Settings Is Immaterial: Each "Set" Command Is Applied Independently By The Manager
         Dictionary<string, string> settings = new ()
         {
-            // Append ':' So Game Server Instances Can Be Mapped To An Account Name (e.g. KONGOR:1, KONGOR:2). The Manager Appends An Incremental Index To This Value.
+            // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Manager Appends An Incremental Index To This Value
             ["man_masterLogin"]         = options.UserName + ":",
             ["man_masterPassword"]      = options.Password,
             ["man_numSlaveAccounts"]    = options.Instances.ToString(),
             ["man_startServerPort"]     = ports.LocalGameStart.ToString(),
             ["man_endServerPort"]       = ports.LocalGameEnd.ToString(),
 
-            // Historically Misnamed: This Is Effectively "man_voiceStartPort". No Proxy Is Involved In The Manager's Voice Port Allocation.
+            // Historically Misnamed: This Is Effectively "man_voiceStartPort"; No Proxy Is Involved In The Manager's Voice Port Allocation
             ["man_voiceProxyStartPort"] = ports.LocalVoiceStart.ToString(),
             ["man_voiceProxyEndPort"]   = ports.LocalVoiceEnd.ToString(),
 
             ["man_maxServers"]          = processorCount.ToString(),
+            ["man_idleTarget"]          = options.WarmInstancesTarget.ToString(),
             ["man_enableProxy"]         = options.UseProxy ? "true" : "false",
             ["man_broadcastSlaves"]     = "true",
             ["man_autoServersPerCPU"]   = "1",
             ["man_allowCPUs"]           = string.Join(',', Enumerable.Range(0, processorCount)),
 
-            // Shorten The Manager's Re-Authentication Retry Interval From Its Five-Minute Default. The Manager Re-Authenticates With The Master Server Only While It Is Disconnected From The Chat Server, So Lowering This Lets It Recover A Fresh Registration And Reconnect Within About Half A Minute After A Dropped Connection Instead Of Waiting Out The Default Cycle, At No Steady-State Cost. The Value Is In Milliseconds.
+            // Shorten The Manager's Re-Authentication Retry Interval From Its Five-Minute Default
+            // The Manager Re-Authenticates With The Master Server Only While It Is Disconnected From The Chat Server, So Lowering This Lets It Recover A Fresh Registration And Reconnect Within About Half A Minute After A Dropped Connection Instead Of Waiting Out The Default Cycle, At No Steady-State Cost
+            // The Value Is In Milliseconds
             ["man_reauthFrequency"]     = "30000",
 
-            // Enables On-Demand Replay Uploads.
+            // Enables On-Demand Replay Uploads
             ["man_uploadToS3OnDemand"]  = "1",
 
-            // Disables Partial Replay Uploads.
+            // Disables Partial Replay Uploads
             ["man_uploadToCDNOnDemand"] = "0",
 
-            // Any Server Configuration Options Other Than The Following Are Ignored By The Manager.
+            // Any Server Configuration Options Other Than The Following Are Ignored By The Manager
             ["svr_name"]                = ServerNameWithWhitespaceWorkaround(options.ServerNamePrefix),
-            ["svr_location"]            = options.Location,
+            // The Validator Accepts The Location In Any Case, But The Master Server Compares Regions Exactly
+            ["svr_location"]            = options.Location.ToUpperInvariant(),
             ["svr_ip"]                  = serverAddress,
 
-            // Setting Affinity To "-1" Is Required So The Manager Can Assign Affinity To Its Child Processes.
+            // Setting Affinity To "-1" Is Required So The Manager Can Assign Affinity To Its Child Processes
             ["host_affinity"]           = "-1",
 
             ["upd_checkForUpdates"]     = "false",
 
-            // The Port On Which COMPEL Answers Master-Server Pings. The Manager Ignores This Value; COMPEL Binds It Itself.
+            // The Port On Which COMPEL Answers Master-Server Pings; The Manager Ignores This Value; COMPEL Binds It Itself
             ["svr_port"]                = ports.PingPort.ToString()
         };
 
@@ -63,7 +67,10 @@ public static class ManagerArguments
             "-manager",
             "-noconfig",
             "-execute", '"' + execute + '"',
-            "-masterserver", masterServerHostAndPort
+            "-masterserver", masterServerHostAndPort,
+
+            // Directs The Manager To Write User Artefacts Beneath The "server" Subdirectory Rather Than The Game Client Default
+            "-mod", "base;game;server"
         ];
     }
 

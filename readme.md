@@ -21,21 +21,23 @@ It ships as a single self-contained binary plus a self-describing `COMPEL.json`.
 
 ## Configuration
 
-All host-facing configuration lives in a single `COMPEL.json` beside the executable, in the self-documenting `{ "Value": …, "Description": … }` format. On first run it is generated with defaults and descriptions, and COMPEL stops so it can be edited. Every value is validated at startup, and all startup problems are reported together.
+All host-facing configuration lives in a single `COMPEL.json` beside the executable, in the self-documenting `{ "Value": …, "Description": … }` format. The release archives ship with a default one already in place; when it is missing (for example when running from source), COMPEL generates it on first run and stops so it can be edited. Every value is validated at startup, and all startup problems are reported together.
 
-| Key                     | Purpose                                                                                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UserName` / `Password` | The Project KONGOR host account credentials.                                                                                                                                 |
-| `Instances`             | Number of match server instances (1 … logical processor count).                                                                                                              |
-| `Gateway`               | `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                                                                  |
-| `Location`              | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`.                                                                                                       |
-| `ServerNamePrefix`      | The base match server name. The instance index is appended.                                                                                                                  |
-| `UseProxy`              | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                      |
-| `PortRangeOffset`       | Offset into the game/voice port windows. `base + offset + instances` must stay within the 100-port window.                                                                   |
-| `RuntimeArtefactsPath`  | `DEFAULT` (the host account's profile) or a fully qualified path. Windows only, as the runtime artefacts path is hard-coded for the Linux server distribution.               |
-| `CDNSynchronisation`    | Whether to synchronise the distribution from the CDN on startup. Set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works). |
-| `AuthenticationToken`   | Bearer token gating the management endpoints. Leave as `...` to disable remote management.                                                                                   |
-| `ControlPlanePort`      | TCP port for the HTTP control plane (default `8080`).                                                                                                                        |
+| Key                                | Purpose                                                                                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UserName` / `Password`            | The Project KONGOR host account credentials.                                                                                                                                 |
+| `Instances`                        | Number of match server instances (1 … logical processor count).                                                                                                              |
+| `WarmInstancesTarget`              | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                   |
+| `Gateway`                          | `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                                                                  |
+| `Location`                         | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`.                                                                                                       |
+| `ServerNamePrefix`                 | The base match server name. The instance index is appended.                                                                                                                  |
+| `UseProxy`                         | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                      |
+| `PortRangeOffset`                  | Offset into the game/voice port windows. `base + offset + instances` must stay within the 100-port window.                                                                   |
+| `RuntimeArtefactsPath`             | `DEFAULT` (the host account's profile) or a fully qualified path. Windows only, as the runtime artefacts path is hard-coded for the Linux server distribution.               |
+| `CDN`                              | The CDN base address or URL (default `cdn.kongor.net`). Without a scheme, `localhost`, `127.0.0.1`, and `[::1]` use HTTP and every other address uses HTTPS.                 |
+| `CDNSynchronisation`               | Whether to synchronise the distribution from the CDN on startup. Set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works). |
+| `ControlPlaneAuthenticationToken`  | Bearer token gating the management endpoints. Leave as `...` to disable remote management.                                                                                   |
+| `ControlPlanePort`                 | TCP port for the HTTP control plane (default `8080`).                                                                                                                        |
 
 ## Running
 
@@ -43,7 +45,11 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 dotnet run --project source/COMPEL
 ```
 
-On first run COMPEL writes a default `COMPEL.json` next to the executable and exits. Set at least `UserName` and `Password` (and `AuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run again. Logs are written to the console and to a single `COMPEL.log` beside the executable.
+The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password` (and `ControlPlaneAuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run COMPEL. Logs are written to the console and to a single `COMPEL.log` beside the executable.
+
+COMPEL does not require elevated privileges. It needs write access to its installation directory, because it mirrors the match server distribution into it and rewrites its own files during a self-update, and it refuses to start when that directory is not writable. Each match server binds itself to the processor it is assigned, and neither COMPEL nor the manager assigns a process priority, so no privileged operation is involved. On Linux the match server writes its runtime artefacts to `/opt/hon/config` regardless of the home directory it is given, so that directory must also be writable by the account running COMPEL; COMPEL checks it at start-up and creates it when it is absent.
+
+On Windows, COMPEL must be installed in a directory whose full path contains a whitespace character, for example `C:\HoN Match Server`. The match server manager spawns each server instance with an unquoted executable path, which Heroes Of Newerth only parses correctly when that path contains a whitespace character; without one every instance starts as a game client instead of a dedicated server and never binds its game port. COMPEL refuses to start from such a path rather than let the manager come up and register servers that no client can join. The restriction does not apply on Linux, where the manager quotes the path it spawns.
 
 ## Control Plane
 
@@ -54,18 +60,19 @@ On first run COMPEL writes a default `COMPEL.json` next to the executable and ex
 | `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, manager/proxy state, uptime. |
 | `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                    |
 | `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                      |
+| `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                    |
 
-Authenticate management requests with `Authorization: Bearer <AuthenticationToken>`, using the `AuthenticationToken` from `COMPEL.json`.
+Authenticate management requests with `Authorization: Bearer <ControlPlaneAuthenticationToken>`, using the `ControlPlaneAuthenticationToken` from `COMPEL.json`.
 
 ## Building & Publishing
 
-Requires the .NET 10 SDK. A native, self-contained release is produced per platform via the publish profiles, or locally with the helper script (PowerShell 7+; on Windows, the Visual Studio C++ build tools are required for the Native AOT link step):
+Requires the .NET 11 SDK. A native, self-contained release is produced per platform via the publish profiles, or locally with the helper script (PowerShell 7+; on Windows, the Visual Studio C++ build tools are required for the Native AOT link step):
 
 ```
 pwsh scripts/Publish-Native-AOT-Release.ps1
 ```
 
-Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-release.yml`, which builds all four platform targets (Windows and Linux, each × x64 and arm64) and attaches one zip per platform to a single GitHub Release.
+Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-releases.yml`, which builds all four platform targets (Windows and Linux, each × x64 and arm64) and attaches one zip per platform, each containing the binary and a default `COMPEL.json`, to a single GitHub Release.
 
 ## Testing
 

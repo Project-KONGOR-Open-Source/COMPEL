@@ -1,16 +1,28 @@
 namespace COMPEL.Services.Proxy;
 
+// TODO: The Proxy Validates Datagram Length, The Per-Challenge Packet Quota, And Duplicate Counters, And Scores Abuse Per Source; It Does Not Yet Validate The Watermarks
+// TODO: The Reference Proxy Also Checks A Constant Per-Region Watermark And A Dynamic CRC32C One, Which Together Are Its Anti-Cheat Signal; Adding Them Needs A Region Setting COMPEL Has No Equivalent For, And Carries A Higher False-Positive Cost Than The Checks Above
 /// <summary>
 ///     The managed, cross-platform proxy. When enabled, it runs a UDP relay per instance for both the game and voice ports, forwarding the public ports (offset by <see cref="PortPlan.ProxyPublicOffset"/>) to the local server ports.
 ///     Heroes Of Newerth clients throttle their own traffic on the public port range until the proxy authenticates them, so each forwarder issues a challenge to every session on creation and this service renews those challenges periodically.
 /// </summary>
-// TODO: This proxy performs the transport, port remapping, and client authentication only. It does NOT detect cheaters or ban anyone: the native proxy's detection heuristics lived in a closed binary and are not reproduced, and the previous firewall/ban-list mechanism was removed as ineffective. A future redesign is expected to introduce a different enforcement approach (likely not a static ban list), at which point a hook to drop or block traffic per source can be reintroduced.
 public sealed class UDPProxyService : BackgroundService
 {
-    private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
+    internal static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(2);
 
-    // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals.
-    private static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
+    // "MAX_IDLE_TIME": A Session That Has Never Authenticated Is Swept Far Sooner Than One Carrying A Real Match, Because Any Datagram From A Novel Source Creates One And The Repeat Above Then Transmits To It Every Second
+    // Eviction Only Runs On A Rotating Pass, So The Effective Unauthenticated Lifetime Is Fifteen To Twenty-Five Seconds Rather Than Exactly Fifteen
+    // This Timeout Is What Makes Repeating To Every Session Affordable, Not What Bounds It: The Reference's Own Bound Also Includes "MAX_GAME_CONNECTIONS" (24), "MAX_GAME_CONNECTIONS_PER_IP" (10), And Refusing New Connections While Its Own Under-Attack Indicator Is Over Threshold
+    internal static readonly TimeSpan UnauthenticatedSessionTimeout = TimeSpan.FromSeconds(15);
+
+    // Renewed Well Within The Client's Authentication Window So A Session Never Lapses Back To The Throttled, Unauthenticated State Between Renewals
+    internal static readonly TimeSpan ChallengeRenewalInterval = TimeSpan.FromSeconds(10);
+
+    // The Maintenance Pass Runs Far More Often Than A Rotation, Because The Reference Re-Sends The Current Challenge About Once A Second So That One Lost Challenge Datagram Cannot Leave A Client Throttled
+    internal static readonly TimeSpan MaintenanceInterval = TimeSpan.FromSeconds(1);
+
+    // Derived Rather Than Written Down Twice, So The Renewal Interval Stays What It Says It Is If Either Value Changes
+    internal static readonly int MaintenancePassesPerRotation = (int) Math.Max(1, ChallengeRenewalInterval.Ticks / MaintenanceInterval.Ticks);
 
     private readonly MatchServerManagerOptions options;
     private readonly PortPlan ports;
@@ -18,18 +30,42 @@ public sealed class UDPProxyService : BackgroundService
 
     private readonly List<UDPForwarder> forwarders = new ();
 
-    // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports.
+    // One Clock For The Score Drain, Both Idle Timeouts And The Unknown-Challenge Grace, So Everything Time-Dependent In The Proxy Measures From The Same Place
+    private readonly TimeProvider timeProvider = TimeProvider.System;
+
+    // Shared Across Every Forwarder So A Single Source's Score Is The Same Regardless Of Which Public Port It Sends To; Not "IDisposable" And So Never Disposed Alongside The Forwarders
+    private readonly ViolationScoreContainer scoreContainer;
+
+    // Shared Across Every Forwarder So Attack Pressure On Any Public Port Activates The Under-Attack Protection Globally
+    private readonly AttackIndicatorContainer attackIndicator;
+
+    // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private readonly SemaphoreSlim lifecycleGate = new (1, 1);
+    private readonly SemaphoreSlim restartSignal = new (0);
+    private CancellationTokenSource? cycleCancellationSource;
+    private TaskCompletionSource<bool>? pendingRestartCompletion;
 
     private volatile bool running;
     private int failedForwarderCount;
+    private long droppedDatagramCount;
+    private int maintenancePassesSinceRotation;
 
     public UDPProxyService(IOptions<MatchServerManagerOptions> options, PortPlan ports, ILogger<UDPProxyService> logger)
     {
         this.options = options.Value;
         this.ports = ports;
         this.logger = logger;
+
+        scoreContainer = new ViolationScoreContainer(timeProvider);
+        attackIndicator = new AttackIndicatorContainer(timeProvider);
     }
+
+    /// <summary>
+    ///     Whether the proxy is enabled in configuration.
+    /// </summary>
+    public bool IsEnabled => options.UseProxy;
 
     public bool IsRunning => running;
 
@@ -43,6 +79,55 @@ public sealed class UDPProxyService : BackgroundService
     /// </summary>
     public int FailedForwarderCount => Volatile.Read(ref failedForwarderCount);
 
+    /// <summary>
+    ///     The number of client datagrams the proxy has refused to relay, across every forwarder, as at the last maintenance pass.
+    /// </summary>
+    public long DroppedDatagramCount => Volatile.Read(ref droppedDatagramCount);
+
+    /// <summary>
+    ///     Whether the proxy is currently under attack based on the live decaying attack indicator.
+    /// </summary>
+    public bool IsUnderAttack => attackIndicator.IsUnderAttack;
+
+    /// <summary>
+    ///     Requests that the proxy restart its forwarders, rebinding its public ports.
+    /// </summary>
+    public async Task<bool> RequestRestart(CancellationToken cancellationToken)
+    {
+        if (options.UseProxy is false)
+            throw new InvalidOperationException("The Proxy Is Disabled");
+
+        TaskCompletionSource<bool> completionSource;
+
+        await lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            if (pendingRestartCompletion is not null)
+            {
+                completionSource = pendingRestartCompletion;
+            }
+
+            else
+            {
+                completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pendingRestartCompletion = completionSource;
+
+                if (cycleCancellationSource is not null && cycleCancellationSource.IsCancellationRequested is false)
+                    cycleCancellationSource.Cancel();
+                else
+                    restartSignal.Release();
+            }
+        }
+
+        finally
+        {
+            lifecycleGate.Release();
+        }
+
+        return await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (options.UseProxy is false)
@@ -54,34 +139,77 @@ public sealed class UDPProxyService : BackgroundService
             return;
         }
 
-        for (int instance = 0; instance < ports.Instances; instance++)
+        while (stoppingToken.IsCancellationRequested is false)
         {
-            TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, "Game");
-            TryAddForwarder(ports.PublicVoiceStart + instance, ports.LocalVoiceStart + instance, "Voice");
+            await RunCycle(stoppingToken).ConfigureAwait(false);
+
+            if (stoppingToken.IsCancellationRequested)
+                break;
+
+            if (pendingRestartCompletion is null)
+            {
+                try { await restartSignal.WaitAsync(stoppingToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+    }
+
+    private async Task RunCycle(CancellationToken stoppingToken)
+    {
+        TaskCompletionSource<bool>? currentRestartCompletion;
+        CancellationTokenSource cycleCancellation;
+
+        await lifecycleGate.WaitAsync(stoppingToken).ConfigureAwait(false);
+
+        try
+        {
+            cycleCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            cycleCancellationSource = cycleCancellation;
+
+            currentRestartCompletion = pendingRestartCompletion;
+            pendingRestartCompletion = null;
+
+            failedForwarderCount = 0;
+            forwarders.Clear();
+
+            for (int instance = 0; instance < ports.Instances; instance++)
+            {
+                TryAddForwarder(ports.PublicGameStart + instance, ports.LocalGameStart + instance, ProxyForwarderKind.Game);
+                TryAddForwarder(ports.PublicVoiceStart + instance, ports.LocalVoiceStart + instance, ProxyForwarderKind.Voice);
+            }
+
+            if (forwarders.Count is 0)
+            {
+                logger.LogError("No Proxy Forwarders Could Be Started");
+
+                ready.TrySetResult(false);
+                currentRestartCompletion?.TrySetResult(false);
+
+                return;
+            }
+
+            running = true;
+
+            ready.TrySetResult(true);
+            currentRestartCompletion?.TrySetResult(true);
+
+            logger.LogInformation
+            (
+                "Proxy Forwarding {Instances} Instance(s): Public Game {PublicGameStart}-{PublicGameEnd} And Voice {PublicVoiceStart}-{PublicVoiceEnd} To Local Game {LocalGameStart}-{LocalGameEnd} And Voice {LocalVoiceStart}-{LocalVoiceEnd}",
+                ports.Instances, ports.PublicGameStart, ports.PublicGameEnd, ports.PublicVoiceStart, ports.PublicVoiceEnd, ports.LocalGameStart, ports.LocalGameEnd, ports.LocalVoiceStart, ports.LocalVoiceEnd
+            );
         }
 
-        if (forwarders.Count is 0)
+        finally
         {
-            logger.LogError("No Proxy Forwarders Could Be Started");
-
-            ready.TrySetResult(false);
-
-            return;
+            lifecycleGate.Release();
         }
 
-        running = true;
+        CancellationToken cycleToken = cycleCancellation.Token;
 
-        ready.TrySetResult(true);
+        List<Task> tasks = forwarders.Select(forwarder => forwarder.Run(cycleToken)).ToList();
 
-        logger.LogInformation
-        (
-            "Proxy Forwarding {Instances} Instance(s): Public Game {PublicGameStart}-{PublicGameEnd} And Voice {PublicVoiceStart}-{PublicVoiceEnd} To Local Game {LocalGameStart}-{LocalGameEnd} And Voice {LocalVoiceStart}-{LocalVoiceEnd}",
-            ports.Instances, ports.PublicGameStart, ports.PublicGameEnd, ports.PublicVoiceStart, ports.PublicVoiceEnd, ports.LocalGameStart, ports.LocalGameEnd, ports.LocalVoiceStart, ports.LocalVoiceEnd
-        );
-
-        List<Task> tasks = forwarders.Select(forwarder => forwarder.Run(stoppingToken)).ToList();
-
-        tasks.Add(RunMaintenanceLoop(stoppingToken));
+        tasks.Add(RunMaintenanceLoop(cycleToken));
 
         try
         {
@@ -94,20 +222,43 @@ public sealed class UDPProxyService : BackgroundService
 
         finally
         {
-            running = false;
+            await lifecycleGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
-            foreach (UDPForwarder forwarder in forwarders)
-                forwarder.Dispose();
+            try
+            {
+                running = false;
 
-            forwarders.Clear();
+                foreach (UDPForwarder forwarder in forwarders)
+                    forwarder.Dispose();
+
+                forwarders.Clear();
+
+                cycleCancellation.Dispose();
+
+                if (ReferenceEquals(cycleCancellationSource, cycleCancellation))
+                    cycleCancellationSource = null;
+            }
+
+            finally
+            {
+                lifecycleGate.Release();
+            }
         }
     }
 
-    private void TryAddForwarder(int publicPort, int localPort, string kind)
+    public override void Dispose()
+    {
+        lifecycleGate.Dispose();
+        restartSignal.Dispose();
+
+        base.Dispose();
+    }
+
+    private void TryAddForwarder(int publicPort, int localPort, ProxyForwarderKind kind)
     {
         try
         {
-            forwarders.Add(new UDPForwarder(publicPort, localPort, logger));
+            forwarders.Add(new UDPForwarder(publicPort, localPort, kind, ChallengeRenewalInterval, scoreContainer, attackIndicator, timeProvider, logger));
         }
 
         catch (Exception exception)
@@ -122,14 +273,41 @@ public sealed class UDPProxyService : BackgroundService
     {
         while (stoppingToken.IsCancellationRequested is false)
         {
-            try { await Task.Delay(ChallengeRenewalInterval, stoppingToken).ConfigureAwait(false); }
+            try { await Task.Delay(MaintenanceInterval, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
+
+            scoreContainer.Drain();
+            attackIndicator.Drain();
+
+            bool rotating = ++maintenancePassesSinceRotation >= MaintenancePassesPerRotation;
+
+            if (rotating)
+                maintenancePassesSinceRotation = 0;
+
+            long droppedDatagrams = 0;
 
             foreach (UDPForwarder forwarder in forwarders)
             {
-                forwarder.ChallengeActiveSessions();
-                forwarder.EvictIdleSessions(IdleSessionTimeout);
+                // A Rotation Sends The New Challenge Itself, So There Is Nothing To Repeat On That Pass
+                if (rotating)
+                {
+                    // Eviction Runs First: A Session Evicted Immediately After Being Sent A Challenge Would Have Its Replacement Rejected, Because A Recreated Session's Floor Starts Fresh And Would Stamp The Same Wall-Clock Second, Which The Client Refuses As Not Strictly Greater
+                    forwarder.EvictIdleSessions(IdleSessionTimeout, UnauthenticatedSessionTimeout);
+                    forwarder.RotateChallenges();
+                }
+
+                else
+                {
+                    forwarder.RepeatChallenges();
+                }
+
+                droppedDatagrams += forwarder.DroppedDatagramCount;
             }
+
+            Volatile.Write(ref droppedDatagramCount, droppedDatagrams);
+
+            if (attackIndicator.IsUnderAttack)
+                logger.LogWarning("The Proxy Is Currently Under Attack (Indicator Score: {Score})", attackIndicator.Score);
         }
     }
 }
