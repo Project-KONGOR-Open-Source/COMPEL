@@ -2,6 +2,7 @@ namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
 ///     Exercises the proxy forwarder over loopback: that a valid datagram is relayed to the server and back, that a datagram too short to validate is dropped instead, that a client is issued a challenge, that each renewal carries a strictly greater value, that a repeated counter under one challenge is dropped as a duplicate, that a counter at the quota is dropped, that a challenge the proxy never issued is dropped and charged, that an unauthenticated counter at the total is dropped, and that an actioned source is refused whatever it sends and before its datagram is otherwise read.
+///     It also exercises the engine's reconnect query, which is relayed without a session and under its own bounds, and whose reply alone is relayed back.
 ///     This validates the challenge wire format (which cannot be tested against a live client here) end to end against the real forwarder.
 ///     The tests run serially and tolerate the occasional loopback datagram drop by retrying, so they do not flake under load.
 /// </summary>
@@ -620,6 +621,7 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Relays(GameDatagram(challenge2, counter: 10))).IsTrue();
     }
 
+    // Spread Over Several Addresses, And Refused From Yet Another, So That Only A Cap Counting Every Address Together Can Refuse The Novel Session
     [Test]
     public async Task A_Forwarder_At_Its_Total_Session_Cap_Refuses_A_Novel_Session()
     {
@@ -661,8 +663,33 @@ public sealed class UDPForwarderTests
         }
     }
 
+    // Documentation Addresses, Which Are Public To The Classification But Reach No One
     [Test]
-    public async Task A_Forwarder_At_Its_Per_Address_Session_Cap_Refuses_A_Novel_Session_From_That_Address_While_Admitting_Another_Address()
+    public async Task A_Forwarder_At_Its_Per_Address_Session_Cap_Refuses_A_Novel_Session_From_That_Public_Address_While_Admitting_Another_Address()
+    {
+        await using ForwarderProbe probe = new ();
+
+        IPAddress publicAddress = IPAddress.Parse("203.0.113.1");
+
+        int admitted = 0;
+
+        for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerAddress; sessionIndex++)
+        {
+            if (Admit(probe.Forwarder, publicAddress, sessionIndex) is UDPForwarder.SessionAdmissionResult.Admitted)
+                admitted++;
+        }
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(admitted).IsEqualTo(UDPForwarder.MaxSessionsPerAddress);
+            await Assert.That(Admit(probe.Forwarder, publicAddress, UDPForwarder.MaxSessionsPerAddress)).IsEqualTo(UDPForwarder.SessionAdmissionResult.AddressCapReached);
+            await Assert.That(Admit(probe.Forwarder, IPAddress.Parse("198.51.100.1"), 0)).IsEqualTo(UDPForwarder.SessionAdmissionResult.Admitted);
+        }
+    }
+
+    // Behind A Relay Every Player Arrives Under The Relay's Address, So A Non-Public Source Is Held To The Forwarder's Cap Alone
+    [Test]
+    public async Task A_Loopback_Source_Opens_Sessions_Beyond_The_Per_Address_Cap_Until_The_Forwarder_Cap()
     {
         await using ForwarderProbe probe = new ();
 
@@ -670,13 +697,11 @@ public sealed class UDPForwarderTests
 
         try
         {
-            IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
-
-            for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+            for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerForwarder; sessionIndex++)
             {
                 Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-                clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
+                clientSocket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                 clients.Add(clientSocket);
 
                 byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
@@ -684,21 +709,13 @@ public sealed class UDPForwarderTests
                 await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
             }
 
-            using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            using Socket overflowClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-            client11.Bind(new IPEndPoint(ipAddress1, 0));
+            overflowClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
 
-            await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
-
-            using Socket clientOtherIP = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-
-            clientOtherIP.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0));
-
-            byte[] otherIPDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
-
-            await Assert.That(await probe.RelaysFrom(clientOtherIP, otherIPDatagram)).IsTrue();
+            await Assert.That(await probe.RefusesFrom(overflowClient, overflowDatagram)).IsTrue();
         }
 
         finally
@@ -708,6 +725,37 @@ public sealed class UDPForwarderTests
         }
     }
 
+    // Only Loopback Can Be Bound Here, So The Other Ranges Are Admitted Without A Datagram
+    [Test]
+    [Arguments("10.1.2.3")]
+    [Arguments("172.16.1.2")]
+    [Arguments("192.168.1.2")]
+    [Arguments("169.254.1.2")]
+    [Arguments("100.64.1.2")]
+    [Arguments("::ffff:127.0.0.1")]
+    [Arguments("::ffff:192.168.1.2")]
+    public async Task A_Non_Public_Source_Opens_Sessions_Beyond_The_Per_Address_Cap_Until_The_Forwarder_Cap(string address)
+    {
+        await using ForwarderProbe probe = new ();
+
+        IPAddress source = IPAddress.Parse(address);
+
+        int admitted = 0;
+
+        for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerForwarder; sessionIndex++)
+        {
+            if (Admit(probe.Forwarder, source, sessionIndex) is UDPForwarder.SessionAdmissionResult.Admitted)
+                admitted++;
+        }
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(admitted).IsEqualTo(UDPForwarder.MaxSessionsPerForwarder);
+            await Assert.That(Admit(probe.Forwarder, source, UDPForwarder.MaxSessionsPerForwarder)).IsEqualTo(UDPForwarder.SessionAdmissionResult.ForwarderCapReached);
+        }
+    }
+
+    // Loopback Is Not Held To The Per-Address Cap, So The Slot Filled Here Is The Forwarder's
     [Test]
     public async Task An_Evicted_Session_Releases_Its_Session_Slot()
     {
@@ -719,13 +767,11 @@ public sealed class UDPForwarderTests
 
         try
         {
-            IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
-
-            for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+            for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerForwarder; sessionIndex++)
             {
                 Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-                clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
+                clientSocket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                 clients.Add(clientSocket);
 
                 byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
@@ -733,18 +779,18 @@ public sealed class UDPForwarderTests
                 await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
             }
 
-            using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            using Socket overflowClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-            client11.Bind(new IPEndPoint(ipAddress1, 0));
+            overflowClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
 
-            await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
+            await Assert.That(await probe.RefusesFrom(overflowClient, overflowDatagram)).IsTrue();
 
             clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout);
             probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
 
-            await Assert.That(await probe.RelaysFrom(client11, overflowDatagram)).IsTrue();
+            await Assert.That(await probe.RelaysFrom(overflowClient, overflowDatagram)).IsTrue();
         }
 
         finally
@@ -799,6 +845,394 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsTrue();
     }
 
+    // The Chat Server Verifies A Match Lock With The Reconnect Query From A Fresh Source Each Time, So As A Session It Would Be Challenged, Charged, And Counted Like A Player
+    [Test]
+    public async Task A_Reconnect_Query_Is_Answered_Without_A_Session_Or_A_Charge()
+    {
+        await using ForwarderProbe probe = new ();
+
+        await Assert.That(await probe.AnswersQueryFrom(probe.Client, ReconnectQueryTests.Reply(240000))).IsTrue();
+
+        // A Session Is Challenged When It Is Created And Again By Every Repeat, So Nothing Further Arriving Is What Proves There Is None
+        probe.Forwarder.RepeatChallenges();
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(await TryReceive(probe.Client)).IsNull();
+            await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(0);
+            await Assert.That(probe.AttackIndicator.Score).IsEqualTo(0);
+            await Assert.That(probe.Forwarder.DroppedDatagramCount).IsEqualTo(0);
+        }
+    }
+
+    [Test]
+    public async Task A_Reconnect_Query_Is_Answered_At_The_Forwarder_Cap()
+    {
+        await using ForwarderProbe probe = new ();
+
+        List<Socket> players = new ();
+
+        try
+        {
+            for (int index = 0; index < UDPForwarder.MaxSessionsPerForwarder; index++)
+            {
+                Socket player = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+                player.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                players.Add(player);
+
+                await Assert.That(await probe.RelaysFrom(player, GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)index))).IsTrue();
+            }
+
+            using Socket novelPlayer = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            novelPlayer.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            await Assert.That(await probe.RefusesFrom(novelPlayer, GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0))).IsTrue();
+
+            int attackScoreBefore = probe.AttackIndicator.Score;
+
+            using Socket chatServer = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            chatServer.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(await probe.AnswersQueryFrom(chatServer, ReconnectQueryTests.Reply(240000))).IsTrue();
+                await Assert.That(probe.AttackIndicator.Score).IsEqualTo(attackScoreBefore);
+            }
+        }
+
+        finally
+        {
+            foreach (Socket player in players)
+                player.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task A_Reconnect_Query_Is_Answered_While_Under_Attack()
+    {
+        await using ForwarderProbe probe = new ();
+
+        probe.AttackIndicator.Charge(AttackIndicatorContainer.UnderAttackThreshold + 100);
+
+        int attackScoreBefore = probe.AttackIndicator.Score;
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(await probe.AnswersQueryFrom(probe.Client, ReconnectQueryTests.Reply(240000))).IsTrue();
+            await Assert.That(probe.AttackIndicator.Score).IsEqualTo(attackScoreBefore);
+        }
+    }
+
+    // The Chat Server Resends The Same Bytes From The Same Source When An Attempt Goes Unanswered, Which A Session Would Refuse As A Duplicate Counter
+    [Test]
+    public async Task Every_Attempt_Of_A_Reconnect_Query_Is_Forwarded()
+    {
+        await using ForwarderProbe probe = new ();
+
+        List<EndPoint> upstreams = new ();
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            if (await probe.ForwardsQueryFrom(probe.Client) is EndPoint upstream)
+                upstreams.Add(upstream);
+        }
+
+        await Assert.That(upstreams.Count).IsEqualTo(3);
+
+        await Assert.That(await probe.RelaysReply(upstreams[^1], ReconnectQueryTests.Reply(240000), probe.Client)).IsTrue();
+    }
+
+    // Each Changes One Fixed Byte: The Header's Connection ID, The Flags, The Command, The Query's Connection ID, Where A Client Datagram Carries Its Challenge And Its Counter, And The Second Copy's Command And Match ID
+    // A Fresh Source Being Challenged Is What Shows The Datagram Went Down The Ordinary Path
+    [Test]
+    [Arguments(0)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(12)]
+    [Arguments(28)]
+    [Arguments(32)]
+    [Arguments(43)]
+    [Arguments(44)]
+    public async Task A_Near_Miss_Of_The_Reconnect_Query_Takes_The_Session_Path(int offset)
+    {
+        await using ForwarderProbe probe = new ();
+
+        byte[] nearMiss = ReconnectQueryTests.Request();
+
+        nearMiss[offset] ^= 0xFF;
+
+        await probe.Client.SendToAsync(nearMiss, SocketFlags.None, probe.PublicEndPoint);
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(53)]
+    [Arguments(55)]
+    public async Task A_Reconnect_Query_Of_Another_Length_Takes_The_Session_Path(int length)
+    {
+        await using ForwarderProbe probe = new ();
+
+        byte[] nearMiss = new byte[length];
+
+        ReconnectQueryTests.Request().AsSpan(0, Math.Min(length, ReconnectQueryTests.Request().Length)).CopyTo(nearMiss);
+
+        await probe.Client.SendToAsync(nearMiss, SocketFlags.None, probe.PublicEndPoint);
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
+    }
+
+    // The Match Server Answers The Query Only On Its Game Port, So A Voice Port Has No Reason To Relay It Outside A Session
+    [Test]
+    public async Task A_Reconnect_Query_To_A_Voice_Port_Takes_The_Session_Path()
+    {
+        await using ForwarderProbe probe = new (kind: ProxyForwarderKind.Voice);
+
+        await probe.Client.SendToAsync(ReconnectQueryTests.Request(), SocketFlags.None, probe.PublicEndPoint);
+
+        (byte[] Payload, EndPoint Sender)? datagram = await TryReceive(probe.Client);
+
+        await Assert.That(datagram is not null && IsChallenge(datagram.Value.Payload)).IsTrue();
+    }
+
+    [Test]
+    public async Task Reconnect_Queries_Over_The_Rate_Limit_Are_Dropped_And_Counted()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        byte[] request = ReconnectQueryTests.Request();
+
+        // The Clock Stands Still, So Every Attempt Falls In The Same Window; Twice The Window's Count Still Exceeds It If A Few Datagrams Are Lost On The Way In
+        int sent = UDPForwarder.ReconnectQueriesPerWindow * 2;
+
+        for (int attempt = 0; attempt < sent; attempt++)
+            await probe.Client.SendToAsync(request, SocketFlags.None, probe.PublicEndPoint);
+
+        int forwarded = 0;
+
+        while (await TryReceive(probe.Server) is not null)
+            forwarded++;
+
+        long dropped = probe.Forwarder.DroppedDatagramCount;
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(forwarded).IsEqualTo(UDPForwarder.ReconnectQueriesPerWindow);
+            await Assert.That(dropped).IsGreaterThan(0);
+            await Assert.That(forwarded + dropped).IsLessThanOrEqualTo(sent);
+            await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(0);
+            await Assert.That(probe.AttackIndicator.Score).IsEqualTo(0);
+        }
+
+        clock.Advance(UDPForwarder.ReconnectQueryWindow);
+
+        await Assert.That(await probe.Relays(request)).IsTrue();
+    }
+
+    [Test]
+    public async Task Reconnect_Queries_From_New_Sources_Beyond_The_Pending_Bound_Are_Dropped_Until_One_Expires()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        byte[] request = ReconnectQueryTests.Request();
+
+        List<Socket> sources = new ();
+
+        try
+        {
+            int forwarded = 0;
+
+            for (int index = 0; index < UDPForwarder.MaximumPendingReconnectQueries; index++)
+            {
+                // A Fresh Window For Every Query, So That Only The Pending Bound Can Refuse One; Nothing Expires, Because Only Eviction Expires A Pending Query
+                clock.Advance(UDPForwarder.ReconnectQueryWindow);
+
+                Socket source = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+                source.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                sources.Add(source);
+
+                if (await probe.RelaysFrom(source, request))
+                    forwarded++;
+            }
+
+            await Assert.That(forwarded).IsEqualTo(UDPForwarder.MaximumPendingReconnectQueries);
+
+            clock.Advance(UDPForwarder.ReconnectQueryWindow);
+
+            using Socket newSource = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            newSource.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(await probe.RefusesFrom(newSource, request)).IsTrue();
+
+                // A Retry Uses The Entry Its Source Already Holds, So The Bound Does Not Refuse It
+                await Assert.That(await probe.RelaysFrom(sources[^1], request)).IsTrue();
+            }
+
+            clock.Advance(UDPForwarder.PendingReconnectQueryTimeout);
+
+            probe.Forwarder.EvictExpiredReconnectQueries();
+
+            await Assert.That(await probe.RelaysFrom(newSource, request)).IsTrue();
+        }
+
+        finally
+        {
+            foreach (Socket source in sources)
+                source.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task A_Server_Datagram_That_Is_Not_A_Reconnect_Reply_Is_Not_Relayed()
+    {
+        await using ForwarderProbe probe = new ();
+
+        EndPoint upstream = await probe.ForwardsQueryFrom(probe.Client) ?? throw new InvalidOperationException("The Reconnect Query Was Not Forwarded");
+
+        byte[] otherCommand = ReconnectQueryTests.Reply(240000);
+
+        otherCommand[3] = 0x66;
+
+        await probe.Server.SendToAsync(otherCommand, SocketFlags.None, upstream);
+        await probe.Server.SendToAsync(new byte[ReconnectQuery.RequestLength], SocketFlags.None, upstream);
+
+        await Assert.That(await TryReceive(probe.Client)).IsNull();
+
+        // Neither Answered The Query, So It Is Still Pending And Its Reply Is Relayed
+        await Assert.That(await probe.RelaysReply(upstream, ReconnectQueryTests.Reply(240000), probe.Client)).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Second_Reply_To_One_Reconnect_Query_Is_Not_Relayed()
+    {
+        await using ForwarderProbe probe = new ();
+
+        EndPoint upstream = await probe.ForwardsQueryFrom(probe.Client) ?? throw new InvalidOperationException("The Reconnect Query Was Not Forwarded");
+
+        byte[] reply = ReconnectQueryTests.Reply(240000);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(await probe.RelaysReply(upstream, reply, probe.Client)).IsTrue();
+            await Assert.That(await probe.RelaysReply(upstream, reply, probe.Client)).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task A_Reconnect_Reply_After_The_Query_Has_Expired_Is_Not_Relayed()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        EndPoint upstream = await probe.ForwardsQueryFrom(probe.Client) ?? throw new InvalidOperationException("The Reconnect Query Was Not Forwarded");
+
+        clock.Advance(UDPForwarder.PendingReconnectQueryTimeout);
+
+        probe.Forwarder.EvictExpiredReconnectQueries();
+
+        await Assert.That(await probe.RelaysReply(upstream, ReconnectQueryTests.Reply(240000), probe.Client)).IsFalse();
+    }
+
+    // Forged From Fresh Sources, More Than Both Bounds Admit Within One Window, And More Than The Forwarder's Cap Would Admit As Sessions
+    [Test]
+    public async Task A_Flood_Of_Reconnect_Queries_Leaves_Players_Unaffected()
+    {
+        ControllableTimeProvider clock = new ();
+
+        await using ForwarderProbe probe = new (clock);
+
+        uint challenge = await probe.Establish();
+
+        await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 0))).IsTrue();
+
+        int attackScoreBefore = probe.AttackIndicator.Score;
+        int playerScoreBefore = probe.Scores.Score(probe.ClientEndPoint);
+        long droppedBefore = probe.Forwarder.DroppedDatagramCount;
+
+        int floodSize = UDPForwarder.ReconnectQueriesPerWindow + UDPForwarder.MaximumPendingReconnectQueries;
+
+        List<Socket> forgers = new ();
+
+        try
+        {
+            for (int index = 0; index < floodSize; index++)
+            {
+                Socket forger = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+                forger.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                forgers.Add(forger);
+
+                await forger.SendToAsync(ReconnectQueryTests.Request(), SocketFlags.None, probe.PublicEndPoint);
+            }
+
+            int forwarded = 0;
+
+            while (await TryReceive(probe.Server) is not null)
+                forwarded++;
+
+            long dropped = probe.Forwarder.DroppedDatagramCount - droppedBefore;
+
+            // Bounded Rather Than Exact For The Drops, Because A Forged Datagram Lost On The Way In Is Neither Forwarded Nor Dropped; The Flood Exceeds The Bounds By Enough That A Few Such Losses Cannot Leave Them Unreached
+            using (Assert.Multiple())
+            {
+                await Assert.That(forwarded).IsEqualTo(Math.Min(UDPForwarder.ReconnectQueriesPerWindow, UDPForwarder.MaximumPendingReconnectQueries));
+                await Assert.That(dropped).IsGreaterThan(0);
+                await Assert.That(forwarded + dropped).IsLessThanOrEqualTo(floodSize);
+                await Assert.That(probe.AttackIndicator.Score).IsEqualTo(attackScoreBefore);
+                await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(playerScoreBefore);
+            }
+
+            // The Player Still Relays, And A New Player Is Still Admitted, Which A Flood Holding A Session Per Source Would Have Prevented By Filling The Forwarder's Cap; The Unchanged Attack Indicator Above Shows It Opened No Session Either
+            using Socket newPlayer = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            newPlayer.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(await probe.Relays(GameDatagram(challenge, counter: 1))).IsTrue();
+                await Assert.That(await probe.RelaysFrom(newPlayer, GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0))).IsTrue();
+            }
+        }
+
+        finally
+        {
+            foreach (Socket forger in forgers)
+                forger.Dispose();
+        }
+    }
+
+    // Pinned As Literals For The Same Reason As The Timeouts Above: The Behavioural Tests Scale With Whatever These Say, So Only This Makes Widening One A Deliberate Act
+    [Test]
+    public async Task The_Reconnect_Query_Bounds_Are_The_Sizes_They_Were_Chosen_As()
+    {
+        int queriesPerWindow = UDPForwarder.ReconnectQueriesPerWindow;
+        int maximumPendingQueries = UDPForwarder.MaximumPendingReconnectQueries;
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(queriesPerWindow).IsEqualTo(30);
+            await Assert.That(UDPForwarder.ReconnectQueryWindow).IsEqualTo(TimeSpan.FromSeconds(1));
+            await Assert.That(maximumPendingQueries).IsEqualTo(30);
+            await Assert.That(UDPForwarder.PendingReconnectQueryTimeout).IsEqualTo(TimeSpan.FromSeconds(2));
+        }
+    }
+
     private static bool IsChallenge(byte[] datagram)
         => datagram.Length >= 58 && datagram[40] is 0xFF && datagram[41] is 0xFF && (datagram[42] & 0x40) is not 0 && datagram[43] is 0x00;
 
@@ -831,6 +1265,10 @@ public sealed class UDPForwarderTests
 
     private static async Task<uint> ReadOneChallengeTimestamp(UDPForwarder forwarder, Socket client)
         => ChallengeTimestamp(await ReadOneChallengePacket(forwarder, client));
+
+    // Opens A Session For A Source That Cannot Be Bound Here, Without A Datagram And So Without A Challenge; The Server Behind The Probe Never Answers One, So Nothing Is Sent To The Source, And Its Port Only Tells The Sessions Apart
+    private static UDPForwarder.SessionAdmissionResult Admit(UDPForwarder forwarder, IPAddress address, int sessionIndex)
+        => forwarder.TryGetOrCreateSession(new IPEndPoint(address, sessionIndex + 1), CancellationToken.None, out _, out _);
 
     private static async Task DrainUntilIdle(Socket socket)
     {
@@ -891,8 +1329,9 @@ public sealed class UDPForwarderTests
 
         /// <summary>
         ///     Supply <paramref name="timeProvider"/> to drive the forwarder's grace and idle timeouts from a test-controlled clock; the tests that assert real wall-clock behaviour omit it and get the system clock.
+        ///     Supply <paramref name="kind"/> to probe a voice forwarder rather than a game one.
         /// </summary>
-        internal ForwarderProbe(TimeProvider? timeProvider = null)
+        internal ForwarderProbe(TimeProvider? timeProvider = null, ProxyForwarderKind kind = ProxyForwarderKind.Game)
         {
             TimeProvider clock = timeProvider ?? TimeProvider.System;
 
@@ -905,7 +1344,7 @@ public sealed class UDPForwarderTests
 
             Scores = new ViolationScoreContainer(clock);
             AttackIndicator = new AttackIndicatorContainer(clock);
-            Forwarder = new UDPForwarder(publicPort, localPort, ProxyForwarderKind.Game, TimeSpan.FromSeconds(10), Scores, AttackIndicator, clock, NullLogger.Instance);
+            Forwarder = new UDPForwarder(publicPort, localPort, kind, TimeSpan.FromSeconds(10), Scores, AttackIndicator, clock, NullLogger.Instance);
 
             run = Forwarder.Run(lifetime.Token);
 
@@ -950,6 +1389,38 @@ public sealed class UDPForwarderTests
 
             return relayed is false && Forwarder.DroppedDatagramCount > refusedBefore;
         }
+
+        /// <summary>
+        ///     Sends the reconnect query from <paramref name="senderSocket"/>, and returns the endpoint the server received it from, or <see langword="null"/> when it did not arrive intact.
+        /// </summary>
+        internal async Task<EndPoint?> ForwardsQueryFrom(Socket senderSocket)
+        {
+            byte[] request = ReconnectQueryTests.Request();
+
+            await senderSocket.SendToAsync(request, SocketFlags.None, publicEndPoint);
+
+            (byte[] Payload, EndPoint Sender)? received = await TryReceive(server);
+
+            return received is not null && received.Value.Payload.SequenceEqual(request) ? received.Value.Sender : null;
+        }
+
+        /// <summary>
+        ///     Has the server send <paramref name="reply"/> to <paramref name="upstream"/>, and returns whether the next datagram <paramref name="senderSocket"/> receives is that reply, from the public port.
+        /// </summary>
+        internal async Task<bool> RelaysReply(EndPoint upstream, byte[] reply, Socket senderSocket)
+        {
+            await server.SendToAsync(reply, SocketFlags.None, upstream);
+
+            (byte[] Payload, EndPoint Sender)? received = await TryReceive(senderSocket);
+
+            return received is not null && received.Value.Payload.SequenceEqual(reply) && received.Value.Sender.Equals(publicEndPoint);
+        }
+
+        /// <summary>
+        ///     Sends the reconnect query from <paramref name="senderSocket"/>, has the server answer it with <paramref name="reply"/>, and returns whether the answer is the first datagram to reach the sender.
+        /// </summary>
+        internal async Task<bool> AnswersQueryFrom(Socket senderSocket, byte[] reply)
+            => await ForwardsQueryFrom(senderSocket) is EndPoint upstream && await RelaysReply(upstream, reply, senderSocket);
 
         /// <summary>
         ///     Establishes the session, which is what causes a challenge to be issued, and returns the challenge the forwarder issued.

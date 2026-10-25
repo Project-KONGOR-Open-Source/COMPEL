@@ -288,6 +288,9 @@ public sealed class UDPProxyService : BackgroundService
 
             foreach (UDPForwarder forwarder in forwarders)
             {
+                // On Every Pass Rather Than Every Rotation, Because A Pending Reconnect Query Is Meant To Outlive Its Source's Retries By Seconds Rather Than By A Rotation
+                forwarder.EvictExpiredReconnectQueries();
+
                 // A Rotation Sends The New Challenge Itself, So There Is Nothing To Repeat On That Pass
                 if (rotating)
                 {

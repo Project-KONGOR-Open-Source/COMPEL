@@ -2,6 +2,7 @@ namespace COMPEL.Services.Proxy;
 
 /// <summary>
 ///     A bidirectional UDP relay for a single public port. It validates each client datagram's length, challenge and counter, scores abusive sources and drops them, and relays only what passes, while the server's replies are relayed back unexamined.
+///     The engine's reconnect query is the one exception on a game port: it is relayed without a session, under bounds of its own, and only its reply is relayed back.
 ///     A dedicated upstream socket per client preserves the server's per-client addressing, mirroring how the native proxy mapped each public port to its local server port.
 ///     Heroes Of Newerth clients throttle their own traffic on the public (20000-29999) port range until the proxy authenticates them with a challenge, so the forwarder issues a challenge to each session on creation and renews it periodically.
 /// </summary>
@@ -23,14 +24,25 @@ internal sealed class UDPForwarder : IDisposable
     private const int ReportedDropLimit = 1000;
 
     // MAX_GAME_CONNECTIONS / MAX_VOICE_CONNECTIONS
-    private const int MaxSessionsPerForwarder = 24;
+    internal const int MaxSessionsPerForwarder = 24;
 
     // MAX_GAME_CONNECTIONS_PER_IP / MAX_VOICE_CONNECTIONS_PER_IP
-    private const int MaxSessionsPerAddress = 10;
+    internal const int MaxSessionsPerAddress = 10;
 
     // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
     // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
     internal static readonly TimeSpan UnknownChallengeGrace = TimeSpan.FromSeconds(30);
+
+    // The Chat Server Queries Only For The Locked Players Of The One Match An Instance Hosts, And Waits For Each Attempt Before Retrying, So This Leaves Several Times The Room A Full Match Verifying At Once Needs, While A Flood Of Forged Queries Reaches The Match Server No Faster
+    internal const int ReconnectQueriesPerWindow = 30;
+
+    internal static readonly TimeSpan ReconnectQueryWindow = TimeSpan.FromSeconds(1);
+
+    // Each Verification In Progress Holds One Entry, And With It One Upstream Socket, So This Is Several Times A Full Match Verifying At Once; It Bounds The Sockets A Flood Can Hold Open While The Match Server Does Not Answer, Which The Rate Alone Does Not
+    internal const int MaximumPendingReconnectQueries = 30;
+
+    // Outlives The Chat Server's Wait For Each Attempt, So That A Late Reply Still Reaches The Retry Waiting For It; Every Retry Renews It
+    internal static readonly TimeSpan PendingReconnectQueryTimeout = TimeSpan.FromSeconds(2);
 
     private readonly IPEndPoint serverEndPoint;
     private readonly ProxyForwarderKind kind;
@@ -43,11 +55,17 @@ internal sealed class UDPForwarder : IDisposable
     private readonly ConcurrentDictionary<IPEndPoint, bool> reportedDrops = new ();
     private readonly SessionChallengeState challenges = new ();
     private readonly Lock sessionsLock = new ();
+    private readonly Dictionary<IPEndPoint, PendingReconnectQuery> reconnectQueries = new ();
+    private readonly Lock reconnectQueriesLock = new ();
     private readonly ushort packetQuota;
     private readonly ushort gameCommandQuota;
 
     private long droppedDatagramCount;
     private int reportedDropCount;
+
+    // Both Guarded By "reconnectQueriesLock"
+    private long reconnectQueryWindowStart;
+    private int reconnectQueryCount;
 
     public int PublicPort { get; }
 
@@ -69,6 +87,8 @@ internal sealed class UDPForwarder : IDisposable
         // The Interval Is Not Stored: It Is Only Needed To Derive The Two Quotas, Which Are Fixed For The Life Of The Forwarder
         packetQuota = ChallengeQuota.ForKind(kind, challengeRenewalInterval);
         gameCommandQuota = ChallengeQuota.GameCommandForInterval(challengeRenewalInterval);
+
+        reconnectQueryWindowStart = timeProvider.GetTimestamp();
 
         frontSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         DisableConnectionResetReporting(frontSocket);
@@ -103,6 +123,15 @@ internal sealed class UDPForwarder : IDisposable
             catch (SocketException exception) { logger.LogDebug(exception, "Front Receive Failed On Port {Port}", PublicPort); continue; }
 
             IPEndPoint client = (IPEndPoint)result.RemoteEndPoint;
+
+            // The Chat Server Verifies A Match Lock With The Engine's Reconnect Query From A Fresh Source Each Time And Retries It Byte For Byte, So As A Session It Would Be Refused At The Caps And While Under Attack, And Its Retries Dropped As Duplicates
+            // It Is Relayed Without One Instead, Under Bounds Of Its Own, And Charges Neither Its Source Nor The Attack Indicator, So That Forging It Cannot Affect The Players
+            if (kind is ProxyForwarderKind.Game && ReconnectQuery.IsRequest(buffer.AsSpan(0, result.ReceivedBytes)))
+            {
+                await ForwardReconnectQuery(client, buffer.AsMemory(0, result.ReceivedBytes), stoppingToken).ConfigureAwait(false);
+
+                continue;
+            }
 
             SessionAdmissionResult admissionResult = TryGetOrCreateSession(client, stoppingToken, out ClientSession? session, out bool created);
 
@@ -293,7 +322,7 @@ internal sealed class UDPForwarder : IDisposable
             Interlocked.Decrement(ref reportedDropCount);
     }
 
-    private enum SessionAdmissionResult
+    internal enum SessionAdmissionResult
     {
         Admitted,
         UnderAttack,
@@ -302,7 +331,7 @@ internal sealed class UDPForwarder : IDisposable
         CreationFailed
     }
 
-    private SessionAdmissionResult TryGetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out ClientSession? session, out bool created)
+    internal SessionAdmissionResult TryGetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out ClientSession? session, out bool created)
     {
         if (sessions.TryGetValue(client, out session))
         {
@@ -338,21 +367,26 @@ internal sealed class UDPForwarder : IDisposable
                 return SessionAdmissionResult.ForwarderCapReached;
             }
 
-            int sessionCountForAddress = 0;
-            foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+            // The Cap Stops One Source On The Internet From Opening Many Sessions, But Behind A Relay Every Player Arrives Under The Relay's Address, So It Would Cap The Whole Match Together And Refuse Reconnecting Players And Spectators
+            // Genuine Internet Clients Never Arrive From A Non-Public Address, So Such A Source Is Held To The Forwarder's Cap Alone; The Attack Indicator, Violation Scoring, The Challenge, And The Idle Timeouts Still Apply To It
+            if (SourceAddress.IsPublic(client.Address))
             {
-                if (pair.Key.Address.Equals(client.Address))
-                    sessionCountForAddress++;
-            }
+                int sessionCountForAddress = 0;
+                foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+                {
+                    if (pair.Key.Address.Equals(client.Address))
+                        sessionCountForAddress++;
+                }
 
-            if (sessionCountForAddress >= MaxSessionsPerAddress)
-            {
-                attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
+                if (sessionCountForAddress >= MaxSessionsPerAddress)
+                {
+                    attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
 
-                session = null;
-                created = false;
+                    session = null;
+                    created = false;
 
-                return SessionAdmissionResult.AddressCapReached;
+                    return SessionAdmissionResult.AddressCapReached;
+                }
             }
 
             Socket upstreamSocket;
@@ -468,6 +502,180 @@ internal sealed class UDPForwarder : IDisposable
                 ReleaseDropReport(report.Key);
     }
 
+    private async Task ForwardReconnectQuery(IPEndPoint client, ReadOnlyMemory<byte> request, CancellationToken stoppingToken)
+    {
+        if (TryAdmitReconnectQuery(client, stoppingToken, out PendingReconnectQuery? query, out string? refusal) is false)
+        {
+            Drop(client, refusal);
+
+            return;
+        }
+
+        try { await query.UpstreamSocket.SendAsync(request, SocketFlags.None, stoppingToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { logger.LogDebug(exception, "Failed To Forward Reconnect Query To Server For {Client}", client); }
+    }
+
+    private bool TryAdmitReconnectQuery(IPEndPoint client, CancellationToken stoppingToken, [NotNullWhen(true)] out PendingReconnectQuery? query, [NotNullWhen(false)] out string? refusal)
+    {
+        long now = timeProvider.GetTimestamp();
+
+        lock (reconnectQueriesLock)
+        {
+            // A Retry Uses The Entry Its First Attempt Opened, So Only A New Source Is Held To The Bound
+            if (reconnectQueries.TryGetValue(client, out query) is false && reconnectQueries.Count >= MaximumPendingReconnectQueries)
+            {
+                refusal = "Too Many Pending Reconnect Queries";
+
+                return false;
+            }
+
+            if (timeProvider.GetElapsedTime(reconnectQueryWindowStart, now) >= ReconnectQueryWindow)
+            {
+                reconnectQueryWindowStart = now;
+                reconnectQueryCount = 0;
+            }
+
+            if (reconnectQueryCount >= ReconnectQueriesPerWindow)
+            {
+                query = null;
+                refusal = "Reconnect Query Rate Exceeded";
+
+                return false;
+            }
+
+            if (query is null)
+            {
+                Socket? upstreamSocket = null;
+
+                try
+                {
+                    upstreamSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                    DisableConnectionResetReporting(upstreamSocket);
+                    upstreamSocket.Connect(serverEndPoint);
+                }
+
+                catch (Exception exception)
+                {
+                    upstreamSocket?.Dispose();
+
+                    logger.LogDebug(exception, "Failed To Open Upstream Reconnect Query Socket For {Client}", client);
+
+                    refusal = "Reconnect Query Socket Failed";
+
+                    return false;
+                }
+
+                query = new PendingReconnectQuery(upstreamSocket, stoppingToken);
+                reconnectQueries[client] = query;
+
+                _ = PumpReconnectReplies(client, query);
+            }
+
+            reconnectQueryCount++;
+            query.UnansweredRequests++;
+            query.LastRequestTimestamp = now;
+
+            refusal = null;
+
+            return true;
+        }
+    }
+
+    private async Task PumpReconnectReplies(IPEndPoint client, PendingReconnectQuery query)
+    {
+        // One Byte Longer Than The Longest Reply, So That A Longer Datagram Cannot Be Cut Down To One That Passes For A Reply
+        byte[] buffer = new byte[ReconnectQuery.WatermarkedReplyLength + 1];
+        CancellationToken cancellationToken = query.Cancellation.Token;
+
+        try
+        {
+            while (cancellationToken.IsCancellationRequested is false)
+            {
+                int received;
+
+                try
+                {
+                    received = await query.UpstreamSocket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Transient For The Same Reason As In A Session's Pump, And A Datagram Too Long For The Buffer Is Not A Reply
+                catch (SocketException exception) when (exception.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionRefused or SocketError.MessageSize)
+                {
+                    continue;
+                }
+
+                if (ReconnectQuery.IsReply(buffer.AsSpan(0, received)) is false || TryClaimReconnectReply(client, query, out bool answered) is false)
+                    continue;
+
+                await frontSocket.SendToAsync(buffer.AsMemory(0, received), SocketFlags.None, client, cancellationToken).ConfigureAwait(false);
+
+                if (answered)
+                    break;
+            }
+        }
+
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception exception) { logger.LogDebug(exception, "Reconnect Query Relay Ended For {Client}", client); }
+
+        finally
+        {
+            // The Reference Check Ensures A Newer Entry For The Same Source Is Never Removed
+            lock (reconnectQueriesLock)
+            {
+                if (reconnectQueries.TryGetValue(client, out PendingReconnectQuery? current) && ReferenceEquals(current, query))
+                    reconnectQueries.Remove(client);
+            }
+
+            query.Dispose();
+        }
+    }
+
+    // One Reply Per Request, And Only While The Query Is Still Pending, So That A Source Is Never Sent More Than It Asked For
+    private bool TryClaimReconnectReply(IPEndPoint client, PendingReconnectQuery query, out bool answered)
+    {
+        answered = false;
+
+        lock (reconnectQueriesLock)
+        {
+            if (query.UnansweredRequests is 0 || reconnectQueries.TryGetValue(client, out PendingReconnectQuery? current) is false || ReferenceEquals(current, query) is false)
+                return false;
+
+            // Removed Under The Lock Once Every Request Is Answered, So That A Retry Arriving Meanwhile Opens A New Entry Rather Than Joining One About To Be Disposed
+            if (--query.UnansweredRequests is 0)
+            {
+                reconnectQueries.Remove(client);
+
+                answered = true;
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    ///     Removes every pending reconnect query whose latest request is at least <see cref="PendingReconnectQueryTimeout"/> old and closes its upstream socket, so that no reply is relayed for it any more and it no longer counts towards <see cref="MaximumPendingReconnectQueries"/>.
+    /// </summary>
+    public void EvictExpiredReconnectQueries()
+    {
+        long now = timeProvider.GetTimestamp();
+
+        lock (reconnectQueriesLock)
+        {
+            foreach (KeyValuePair<IPEndPoint, PendingReconnectQuery> pair in reconnectQueries)
+            {
+                if (timeProvider.GetElapsedTime(pair.Value.LastRequestTimestamp, now) < PendingReconnectQueryTimeout)
+                    continue;
+
+                // Removing The Current Entry Does Not Invalidate A "Dictionary" Enumeration
+                reconnectQueries.Remove(pair.Key);
+
+                pair.Value.Dispose();
+            }
+        }
+    }
+
     public void Dispose()
     {
         frontSocket.Dispose();
@@ -476,10 +684,18 @@ internal sealed class UDPForwarder : IDisposable
             session.Dispose();
 
         sessions.Clear();
+
+        lock (reconnectQueriesLock)
+        {
+            foreach (PendingReconnectQuery query in reconnectQueries.Values)
+                query.Dispose();
+
+            reconnectQueries.Clear();
+        }
     }
 
     // Every Clock This Class Reads Comes From The Injected Provider Rather Than "Environment.TickCount64" Or The Wall Clock, Which Is What Lets A Test Reach The Unknown-Challenge Grace's Bound And Both Idle Timeouts Without Waiting Out The Real Interval
-    private sealed class ClientSession : IDisposable
+    internal sealed class ClientSession : IDisposable
     {
         public Socket UpstreamSocket { get; }
 
@@ -544,6 +760,39 @@ internal sealed class UDPForwarder : IDisposable
                 return;
 
             // Cancel First So The Server-To-Client Pump Stops Awaiting Its Socket Before It Is Torn Down
+            Cancellation.Cancel();
+            Cancellation.Dispose();
+            UpstreamSocket.Dispose();
+        }
+    }
+
+    // The Reply Carries Nothing That Identifies The Query It Answers, So Each Source Is Given An Upstream Socket Of Its Own, And The Socket A Reply Arrives On Is What Routes It Back
+    private sealed class PendingReconnectQuery : IDisposable
+    {
+        public Socket UpstreamSocket { get; }
+
+        public CancellationTokenSource Cancellation { get; }
+
+        // Both Guarded By "reconnectQueriesLock"; The Timestamp Is A Provider Timestamp, So Only "TimeProvider.GetElapsedTime" Can Interpret It
+        public long LastRequestTimestamp;
+
+        public int UnansweredRequests;
+
+        private int disposed;
+
+        public PendingReconnectQuery(Socket upstreamSocket, CancellationToken stoppingToken)
+        {
+            UpstreamSocket = upstreamSocket;
+            Cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        }
+
+        public void Dispose()
+        {
+            // Idempotent, Because Eviction, Shutdown, And The Pump Itself Can All Reach An Entry
+            if (Interlocked.Exchange(ref disposed, 1) is not 0)
+                return;
+
+            // Cancel First So The Reply Pump Stops Awaiting Its Socket Before It Is Torn Down
             Cancellation.Cancel();
             Cancellation.Dispose();
             UpstreamSocket.Dispose();
