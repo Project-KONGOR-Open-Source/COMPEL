@@ -33,7 +33,7 @@ internal sealed class UDPForwarder : IDisposable
     // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
     internal static readonly TimeSpan UnknownChallengeGrace = TimeSpan.FromSeconds(30);
 
-    // The Chat Server Sends Each Locked Player's Query At Most About Once A Second, Retries Included, And An Instance Hosts One Match, So This Is Several Times A Full Match Verifying In The Same Second, While A Flood Of Forged Queries Reaches The Match Server No Faster
+    // The Chat Server Queries Only For The Locked Players Of The One Match An Instance Hosts, And Waits For Each Attempt Before Retrying, So This Leaves Several Times The Room A Full Match Verifying At Once Needs, While A Flood Of Forged Queries Reaches The Match Server No Faster
     internal const int ReconnectQueriesPerWindow = 30;
 
     internal static readonly TimeSpan ReconnectQueryWindow = TimeSpan.FromSeconds(1);

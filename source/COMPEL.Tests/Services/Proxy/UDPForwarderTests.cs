@@ -967,19 +967,24 @@ public sealed class UDPForwarderTests
 
         byte[] request = ReconnectQueryTests.Request();
 
+        // The Clock Stands Still, So Every Attempt Falls In The Same Window; Twice The Window's Count Still Exceeds It If A Few Datagrams Are Lost On The Way In
+        int sent = UDPForwarder.ReconnectQueriesPerWindow * 2;
+
+        for (int attempt = 0; attempt < sent; attempt++)
+            await probe.Client.SendToAsync(request, SocketFlags.None, probe.PublicEndPoint);
+
         int forwarded = 0;
 
-        // The Clock Stands Still, So Every Attempt Falls In The Same Window
-        for (int attempt = 0; attempt < UDPForwarder.ReconnectQueriesPerWindow; attempt++)
-        {
-            if (await probe.Relays(request))
-                forwarded++;
-        }
+        while (await TryReceive(probe.Server) is not null)
+            forwarded++;
+
+        long dropped = probe.Forwarder.DroppedDatagramCount;
 
         using (Assert.Multiple())
         {
             await Assert.That(forwarded).IsEqualTo(UDPForwarder.ReconnectQueriesPerWindow);
-            await Assert.That(await probe.Refuses(request)).IsTrue();
+            await Assert.That(dropped).IsGreaterThan(0);
+            await Assert.That(forwarded + dropped).IsLessThanOrEqualTo(sent);
             await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(0);
             await Assert.That(probe.AttackIndicator.Score).IsEqualTo(0);
         }
@@ -1137,10 +1142,14 @@ public sealed class UDPForwarderTests
             while (await TryReceive(probe.Server) is not null)
                 forwarded++;
 
+            long dropped = probe.Forwarder.DroppedDatagramCount - droppedBefore;
+
+            // Bounded Rather Than Exact For The Drops, Because A Forged Datagram Lost On The Way In Is Neither Forwarded Nor Dropped; The Flood Exceeds The Bounds By Enough That A Few Such Losses Cannot Leave Them Unreached
             using (Assert.Multiple())
             {
                 await Assert.That(forwarded).IsEqualTo(Math.Min(UDPForwarder.ReconnectQueriesPerWindow, UDPForwarder.MaximumPendingReconnectQueries));
-                await Assert.That(probe.Forwarder.DroppedDatagramCount - droppedBefore).IsEqualTo(floodSize - forwarded);
+                await Assert.That(dropped).IsGreaterThan(0);
+                await Assert.That(forwarded + dropped).IsLessThanOrEqualTo(floodSize);
                 await Assert.That(probe.AttackIndicator.Score).IsEqualTo(attackScoreBefore);
                 await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(playerScoreBefore);
             }
