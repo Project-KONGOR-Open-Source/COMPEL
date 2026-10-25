@@ -662,8 +662,33 @@ public sealed class UDPForwarderTests
         }
     }
 
+    // Documentation Addresses, Which Are Public To The Classification But Reach No One
     [Test]
-    public async Task A_Forwarder_At_Its_Per_Address_Session_Cap_Refuses_A_Novel_Session_From_That_Address_While_Admitting_Another_Address()
+    public async Task A_Forwarder_At_Its_Per_Address_Session_Cap_Refuses_A_Novel_Session_From_That_Public_Address_While_Admitting_Another_Address()
+    {
+        await using ForwarderProbe probe = new ();
+
+        IPAddress publicAddress = IPAddress.Parse("203.0.113.1");
+
+        int admitted = 0;
+
+        for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerAddress; sessionIndex++)
+        {
+            if (Admit(probe.Forwarder, publicAddress, sessionIndex) is UDPForwarder.SessionAdmissionResult.Admitted)
+                admitted++;
+        }
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(admitted).IsEqualTo(UDPForwarder.MaxSessionsPerAddress);
+            await Assert.That(Admit(probe.Forwarder, publicAddress, UDPForwarder.MaxSessionsPerAddress)).IsEqualTo(UDPForwarder.SessionAdmissionResult.AddressCapReached);
+            await Assert.That(Admit(probe.Forwarder, IPAddress.Parse("198.51.100.1"), 0)).IsEqualTo(UDPForwarder.SessionAdmissionResult.Admitted);
+        }
+    }
+
+    // Behind A Relay Every Player Arrives Under The Relay's Address, So A Source Only A Relay Or The Local Network Can Present Is Held To The Forwarder's Cap Alone
+    [Test]
+    public async Task A_Loopback_Source_Opens_Sessions_Beyond_The_Per_Address_Cap_Until_The_Forwarder_Cap()
     {
         await using ForwarderProbe probe = new ();
 
@@ -671,13 +696,11 @@ public sealed class UDPForwarderTests
 
         try
         {
-            IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
-
-            for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+            for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerForwarder; sessionIndex++)
             {
                 Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-                clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
+                clientSocket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                 clients.Add(clientSocket);
 
                 byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
@@ -685,21 +708,13 @@ public sealed class UDPForwarderTests
                 await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
             }
 
-            using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            using Socket overflowClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-            client11.Bind(new IPEndPoint(ipAddress1, 0));
+            overflowClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
 
-            await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
-
-            using Socket clientOtherIP = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-
-            clientOtherIP.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0));
-
-            byte[] otherIPDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
-
-            await Assert.That(await probe.RelaysFrom(clientOtherIP, otherIPDatagram)).IsTrue();
+            await Assert.That(await probe.RefusesFrom(overflowClient, overflowDatagram)).IsTrue();
         }
 
         finally
@@ -709,6 +724,37 @@ public sealed class UDPForwarderTests
         }
     }
 
+    // Only Loopback Can Be Bound Here, So The Other Ranges Are Admitted Without A Datagram
+    [Test]
+    [Arguments("10.1.2.3")]
+    [Arguments("172.16.1.2")]
+    [Arguments("192.168.1.2")]
+    [Arguments("169.254.1.2")]
+    [Arguments("100.64.1.2")]
+    [Arguments("::ffff:127.0.0.1")]
+    [Arguments("::ffff:192.168.1.2")]
+    public async Task A_Non_Public_Source_Opens_Sessions_Beyond_The_Per_Address_Cap_Until_The_Forwarder_Cap(string address)
+    {
+        await using ForwarderProbe probe = new ();
+
+        IPAddress source = IPAddress.Parse(address);
+
+        int admitted = 0;
+
+        for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerForwarder; sessionIndex++)
+        {
+            if (Admit(probe.Forwarder, source, sessionIndex) is UDPForwarder.SessionAdmissionResult.Admitted)
+                admitted++;
+        }
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(admitted).IsEqualTo(UDPForwarder.MaxSessionsPerForwarder);
+            await Assert.That(Admit(probe.Forwarder, source, UDPForwarder.MaxSessionsPerForwarder)).IsEqualTo(UDPForwarder.SessionAdmissionResult.ForwarderCapReached);
+        }
+    }
+
+    // Loopback Is Not Held To The Per-Address Cap, So The Slot Filled Here Is The Forwarder's
     [Test]
     public async Task An_Evicted_Session_Releases_Its_Session_Slot()
     {
@@ -720,13 +766,11 @@ public sealed class UDPForwarderTests
 
         try
         {
-            IPAddress ipAddress1 = IPAddress.Parse("127.0.0.1");
-
-            for (int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+            for (int sessionIndex = 0; sessionIndex < UDPForwarder.MaxSessionsPerForwarder; sessionIndex++)
             {
                 Socket clientSocket = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-                clientSocket.Bind(new IPEndPoint(ipAddress1, 0));
+                clientSocket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                 clients.Add(clientSocket);
 
                 byte[] datagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)sessionIndex);
@@ -734,18 +778,18 @@ public sealed class UDPForwarderTests
                 await Assert.That(await probe.RelaysFrom(clientSocket, datagram)).IsTrue();
             }
 
-            using Socket client11 = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            using Socket overflowClient = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-            client11.Bind(new IPEndPoint(ipAddress1, 0));
+            overflowClient.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
             byte[] overflowDatagram = GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: 0);
 
-            await Assert.That(await probe.RefusesFrom(client11, overflowDatagram)).IsTrue();
+            await Assert.That(await probe.RefusesFrom(overflowClient, overflowDatagram)).IsTrue();
 
             clock.Advance(UDPProxyService.UnauthenticatedSessionTimeout);
             probe.Forwarder.EvictIdleSessions(UDPProxyService.IdleSessionTimeout, UDPProxyService.UnauthenticatedSessionTimeout);
 
-            await Assert.That(await probe.RelaysFrom(client11, overflowDatagram)).IsTrue();
+            await Assert.That(await probe.RelaysFrom(overflowClient, overflowDatagram)).IsTrue();
         }
 
         finally
@@ -829,7 +873,7 @@ public sealed class UDPForwarderTests
 
         try
         {
-            // The First Ten Players Share The Query's Address, Which Reaches Its Per-Address Cap, And The Rest Bring The Forwarder To Its Total
+            // The Players Bring The Forwarder To Its Total; Their Loopback Addresses Are Not Held To The Per-Address Cap
             for (int index = 0; index < 24; index++)
             {
                 Socket player = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -1221,6 +1265,10 @@ public sealed class UDPForwarderTests
 
     private static async Task<uint> ReadOneChallengeTimestamp(UDPForwarder forwarder, Socket client)
         => ChallengeTimestamp(await ReadOneChallengePacket(forwarder, client));
+
+    // Opens A Session For A Source That Cannot Be Bound Here, Without A Datagram And So Without A Challenge; The Server Behind The Probe Never Answers One, So Nothing Is Sent To The Source, And Its Port Only Tells The Sessions Apart
+    private static UDPForwarder.SessionAdmissionResult Admit(UDPForwarder forwarder, IPAddress address, int sessionIndex)
+        => forwarder.TryGetOrCreateSession(new IPEndPoint(address, sessionIndex + 1), CancellationToken.None, out _, out _);
 
     private static async Task DrainUntilIdle(Socket socket)
     {

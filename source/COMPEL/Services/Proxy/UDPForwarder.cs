@@ -24,10 +24,10 @@ internal sealed class UDPForwarder : IDisposable
     private const int ReportedDropLimit = 1000;
 
     // MAX_GAME_CONNECTIONS / MAX_VOICE_CONNECTIONS
-    private const int MaxSessionsPerForwarder = 24;
+    internal const int MaxSessionsPerForwarder = 24;
 
     // MAX_GAME_CONNECTIONS_PER_IP / MAX_VOICE_CONNECTIONS_PER_IP
-    private const int MaxSessionsPerAddress = 10;
+    internal const int MaxSessionsPerAddress = 10;
 
     // A Session That Has Never Had A Datagram Admitted May Belong To A Client Still Echoing A Challenge Issued To An Earlier Session, Because The Client Keys Its Challenge On Our Public Port Rather Than Its Own Source Port
     // The Grace Is Bounded Both Ways: It Ends At The First Admitted Datagram, And It Expires Regardless, So A Source That Never Authenticates Does Not Keep It
@@ -322,7 +322,7 @@ internal sealed class UDPForwarder : IDisposable
             Interlocked.Decrement(ref reportedDropCount);
     }
 
-    private enum SessionAdmissionResult
+    internal enum SessionAdmissionResult
     {
         Admitted,
         UnderAttack,
@@ -331,7 +331,7 @@ internal sealed class UDPForwarder : IDisposable
         CreationFailed
     }
 
-    private SessionAdmissionResult TryGetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out ClientSession? session, out bool created)
+    internal SessionAdmissionResult TryGetOrCreateSession(IPEndPoint client, CancellationToken stoppingToken, out ClientSession? session, out bool created)
     {
         if (sessions.TryGetValue(client, out session))
         {
@@ -367,21 +367,26 @@ internal sealed class UDPForwarder : IDisposable
                 return SessionAdmissionResult.ForwarderCapReached;
             }
 
-            int sessionCountForAddress = 0;
-            foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+            // The Cap Stops One Source On The Internet From Opening Many Sessions, But Behind A Relay Every Player Arrives Under The Relay's Address, So It Would Cap The Whole Match Together And Refuse Reconnecting Players And Spectators
+            // Only A Relay Or The Local Network Can Present A Non-Public Address, So Such A Source Is Held To The Forwarder's Cap Alone; The Attack Indicator, Violation Scoring, The Challenge, And The Idle Timeouts Still Apply To It
+            if (SourceAddress.IsPublic(client.Address))
             {
-                if (pair.Key.Address.Equals(client.Address))
-                    sessionCountForAddress++;
-            }
+                int sessionCountForAddress = 0;
+                foreach (KeyValuePair<IPEndPoint, ClientSession> pair in sessions)
+                {
+                    if (pair.Key.Address.Equals(client.Address))
+                        sessionCountForAddress++;
+                }
 
-            if (sessionCountForAddress >= MaxSessionsPerAddress)
-            {
-                attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
+                if (sessionCountForAddress >= MaxSessionsPerAddress)
+                {
+                    attackIndicator.Charge(AttackIndicatorContainer.CapRefusalAttackWeight);
 
-                session = null;
-                created = false;
+                    session = null;
+                    created = false;
 
-                return SessionAdmissionResult.AddressCapReached;
+                    return SessionAdmissionResult.AddressCapReached;
+                }
             }
 
             Socket upstreamSocket;
@@ -690,7 +695,7 @@ internal sealed class UDPForwarder : IDisposable
     }
 
     // Every Clock This Class Reads Comes From The Injected Provider Rather Than "Environment.TickCount64" Or The Wall Clock, Which Is What Lets A Test Reach The Unknown-Challenge Grace's Bound And Both Idle Timeouts Without Waiting Out The Real Interval
-    private sealed class ClientSession : IDisposable
+    internal sealed class ClientSession : IDisposable
     {
         public Socket UpstreamSocket { get; }
 
