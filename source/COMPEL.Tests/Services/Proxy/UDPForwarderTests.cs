@@ -1149,7 +1149,7 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.RelaysReply(upstream, ReconnectQueryTests.Reply(240000), probe.Client)).IsFalse();
     }
 
-    // Forged From The Player's Own Address, And More Than Both Bounds Admit Within One Window
+    // Forged From Fresh Sources, More Than Both Bounds Admit Within One Window, And More Than The Forwarder's Cap Would Admit As Sessions
     [Test]
     public async Task A_Flood_Of_Reconnect_Queries_Leaves_Players_Unaffected()
     {
@@ -1198,7 +1198,7 @@ public sealed class UDPForwarderTests
                 await Assert.That(probe.Scores.Score(probe.ClientEndPoint)).IsEqualTo(playerScoreBefore);
             }
 
-            // The Player Still Relays, And A New Player From The Same Address Is Still Admitted, So The Flood Took No Session And No Share Of A Cap
+            // The Player Still Relays, And A New Player Is Still Admitted, Which A Flood Holding A Session Per Source Would Have Prevented By Filling The Forwarder's Cap; The Unchanged Attack Indicator Above Shows It Opened No Session Either
             using Socket newPlayer = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
             newPlayer.Bind(new IPEndPoint(IPAddress.Loopback, 0));
