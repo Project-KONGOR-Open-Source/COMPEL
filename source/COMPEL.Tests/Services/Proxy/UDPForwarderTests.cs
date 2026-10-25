@@ -621,6 +621,7 @@ public sealed class UDPForwarderTests
         await Assert.That(await probe.Relays(GameDatagram(challenge2, counter: 10))).IsTrue();
     }
 
+    // Spread Over Several Addresses, And Refused From Yet Another, So That Only A Cap Counting Every Address Together Can Refuse The Novel Session
     [Test]
     public async Task A_Forwarder_At_Its_Total_Session_Cap_Refuses_A_Novel_Session()
     {
@@ -686,7 +687,7 @@ public sealed class UDPForwarderTests
         }
     }
 
-    // Behind A Relay Every Player Arrives Under The Relay's Address, So A Source Only A Relay Or The Local Network Can Present Is Held To The Forwarder's Cap Alone
+    // Behind A Relay Every Player Arrives Under The Relay's Address, So A Non-Public Source Is Held To The Forwarder's Cap Alone
     [Test]
     public async Task A_Loopback_Source_Opens_Sessions_Beyond_The_Per_Address_Cap_Until_The_Forwarder_Cap()
     {
@@ -865,7 +866,7 @@ public sealed class UDPForwarderTests
     }
 
     [Test]
-    public async Task A_Reconnect_Query_Is_Answered_At_The_Session_Caps()
+    public async Task A_Reconnect_Query_Is_Answered_At_The_Forwarder_Cap()
     {
         await using ForwarderProbe probe = new ();
 
@@ -873,12 +874,11 @@ public sealed class UDPForwarderTests
 
         try
         {
-            // The Players Bring The Forwarder To Its Total; Their Loopback Addresses Are Not Held To The Per-Address Cap
-            for (int index = 0; index < 24; index++)
+            for (int index = 0; index < UDPForwarder.MaxSessionsPerForwarder; index++)
             {
                 Socket player = new (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
-                player.Bind(new IPEndPoint(IPAddress.Parse($"127.0.0.{index / 10 + 1}"), 0));
+                player.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                 players.Add(player);
 
                 await Assert.That(await probe.RelaysFrom(player, GameDatagram(SessionChallengeState.UnauthenticatedChallenge, counter: (ushort)index))).IsTrue();

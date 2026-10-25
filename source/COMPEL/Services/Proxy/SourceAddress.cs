@@ -1,7 +1,7 @@
 namespace COMPEL.Services.Proxy;
 
 /// <summary>
-///     Tells a public source address from one that only a relay or the local network can present: a loopback, private, link-local, or shared address.
+///     Tells a public source address from a loopback, private, link-local, or shared one, which no genuine client on the internet arrives from.
 ///     An IPv4-mapped IPv6 address is classified as the IPv4 address it maps.
 /// </summary>
 internal static class SourceAddress
@@ -17,7 +17,7 @@ internal static class SourceAddress
     ];
 
     /// <summary>
-    ///     Whether <paramref name="address"/> lies outside the loopback, private, link-local, and shared ranges, which is where every client on the internet arrives from.
+    ///     Whether <paramref name="address"/> lies outside the loopback, private, link-local, and shared ranges, which is where every genuine client on the internet arrives from.
     /// </summary>
     internal static bool IsPublic(IPAddress address)
     {

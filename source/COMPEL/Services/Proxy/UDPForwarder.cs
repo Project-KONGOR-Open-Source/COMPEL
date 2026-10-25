@@ -368,7 +368,7 @@ internal sealed class UDPForwarder : IDisposable
             }
 
             // The Cap Stops One Source On The Internet From Opening Many Sessions, But Behind A Relay Every Player Arrives Under The Relay's Address, So It Would Cap The Whole Match Together And Refuse Reconnecting Players And Spectators
-            // Only A Relay Or The Local Network Can Present A Non-Public Address, So Such A Source Is Held To The Forwarder's Cap Alone; The Attack Indicator, Violation Scoring, The Challenge, And The Idle Timeouts Still Apply To It
+            // Genuine Internet Clients Never Arrive From A Non-Public Address, So Such A Source Is Held To The Forwarder's Cap Alone; The Attack Indicator, Violation Scoring, The Challenge, And The Idle Timeouts Still Apply To It
             if (SourceAddress.IsPublic(client.Address))
             {
                 int sessionCountForAddress = 0;
