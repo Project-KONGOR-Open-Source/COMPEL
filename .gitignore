@@ -436,4 +436,3 @@ FodyWeavers.xsd
 # Release Artefacts
 /windows-*.zip
 /linux-*.zip
-/macos-*.zip

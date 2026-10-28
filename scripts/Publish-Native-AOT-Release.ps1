@@ -88,7 +88,6 @@ if (-not (Test-Path (Join-Path $PublishDirectory 'COMPEL.json'))) { throw 'COMPE
 if ((Test-Path (Join-Path $PublishDirectory 'COMPEL.log')) -or (Test-Path (Join-Path $PublishDirectory 'COMPEL.lock'))) { throw 'COMPEL unexpectedly created runtime artefacts beyond COMPEL.json' }
 
 Get-ChildItem -Path $PublishDirectory -Recurse -File      -Include '*.pdb', '*.dbg' | Remove-Item -Force
-Get-ChildItem -Path $PublishDirectory -Recurse -Directory -Filter  '*.dSYM'         | Remove-Item -Recurse -Force
 
 $PropsPath       = Join-Path $SolutionDirectory 'Directory.Build.props'
 $ResolvedVersion = (Select-Xml -Path $PropsPath -XPath '/Project/PropertyGroup/Version').Node.InnerText
