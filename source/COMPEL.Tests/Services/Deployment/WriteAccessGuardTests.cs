@@ -30,7 +30,7 @@ public sealed class WriteAccessGuardTests
         }
     }
 
-    // The Linux Server Writes To A Fixed Location That May Not Exist Yet, So The Check Creates A Missing Directory Rather Than Reporting It As Unwritable
+    // The Artefacts Directory May Not Exist Yet, So The Check Creates A Missing Directory Rather Than Reporting It As Unwritable
     [Test]
     public async Task A_Missing_Directory_That_Can_Be_Created_Is_Reported_As_Writable()
     {
@@ -79,7 +79,7 @@ public sealed class WriteAccessGuardTests
 
         try
         {
-            await Assert.That(WriteAccessGuard.FindUnwritableDirectory(directory)).IsNull();
+            await Assert.That(WriteAccessGuard.FindUnwritableDirectory(directory, Path.Combine(directory, "HON"))).IsNull();
         }
 
         finally
@@ -98,12 +98,56 @@ public sealed class WriteAccessGuardTests
 
         try
         {
-            await Assert.That(WriteAccessGuard.FindUnwritableDirectory(occupied)).IsEqualTo(occupied);
+            await Assert.That(WriteAccessGuard.FindUnwritableDirectory(occupied, Path.Combine(parent, "HON"))).IsEqualTo(occupied);
         }
 
         finally
         {
             Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    // The Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Home Directory COMPEL Gives Them, On Every Platform
+    [Test]
+    public async Task An_Unwritable_Artefacts_Directory_Is_The_Reported_Directory()
+    {
+        string installation = CreateTemporaryDirectory();
+        string parent = CreateTemporaryDirectory();
+        string occupied = Path.Combine(parent, "HON");
+
+        File.WriteAllText(occupied, "not a directory");
+
+        try
+        {
+            await Assert.That(WriteAccessGuard.FindUnwritableDirectory(installation, occupied)).IsEqualTo(occupied);
+        }
+
+        finally
+        {
+            Directory.Delete(installation, recursive: true);
+            Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    // A Relative Artefacts Directory Comes From A Setting The Options Validator Rejects Once The Host Starts, So The Guard Creates Nothing Beneath The Working Directory For It
+    [Test]
+    public async Task A_Relative_Artefacts_Directory_Is_Left_To_The_Options_Validator()
+    {
+        string installation = CreateTemporaryDirectory();
+        string relative = Path.Combine($"COMPEL.WriteAccessGuardTests.{Guid.NewGuid():N}", "HON");
+
+        try
+        {
+            using (Assert.Multiple())
+            {
+                await Assert.That(WriteAccessGuard.FindUnwritableDirectory(installation, relative)).IsNull();
+                await Assert.That(Directory.Exists(relative)).IsFalse();
+            }
+        }
+
+        finally
+        {
+            Directory.Delete(installation, recursive: true);
         }
     }
 

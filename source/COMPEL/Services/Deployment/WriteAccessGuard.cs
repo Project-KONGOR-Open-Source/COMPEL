@@ -40,12 +40,16 @@ public static class WriteAccessGuard
 
     /// <summary>
     ///     Returns the first directory COMPEL must be able to write to but cannot, or <see langword="null"/> when every one of them is writable.
-    ///     The match server writes its runtime artefacts beneath the home directory it is given, on every platform, which COMPEL creates before every launch, so only the installation directory is checked.
+    ///     The manager and its match servers write their runtime artefacts beneath the home directory COMPEL gives them, on every platform, so that root is checked as well as the installation directory.
+    ///     A relative artefacts directory comes from a setting that the options validator rejects once the host starts, so it is not probed, which would create it beneath the working directory.
     /// </summary>
-    public static string? FindUnwritableDirectory(string installationDirectory)
+    public static string? FindUnwritableDirectory(string installationDirectory, string artefactsDirectory)
     {
         if (CanWriteTo(installationDirectory) is false)
             return installationDirectory;
+
+        if (Path.IsPathFullyQualified(artefactsDirectory) && CanWriteTo(artefactsDirectory) is false)
+            return artefactsDirectory;
 
         return null;
     }

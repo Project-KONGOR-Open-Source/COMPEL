@@ -80,12 +80,25 @@ if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 }
 
 // COMPEL Mirrors The Distribution Into Its Installation Directory And Rewrites Its Own Files During A Self-Update, So Write Access Is A Requirement
+// The Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Artefacts Directory, And Report A Failure To Do So Only In Logs They Cannot Write Either, So Write Access Is A Requirement There Too
 // Checked Up-Front Because The Alternative Is A Permission Failure Surfacing Part-Way Through A Multi-Gigabyte Synchronisation Or During An Update That Has Already Replaced Some Files
-if (WriteAccessGuard.FindUnwritableDirectory(installationDirectory) is string unwritableDirectory)
+string artefactsDirectory = new ArtefactsLocator(Options.Create(new MatchServerManagerOptions { RuntimeArtefactsPath = configuration.RuntimeArtefactsPath.Value })).ArtefactsDirectory;
+
+if (WriteAccessGuard.FindUnwritableDirectory(installationDirectory, artefactsDirectory) is string unwritableDirectory)
 {
     logger.Log(LogCategory.Guard, $@"COMPEL Cannot Write To ""{unwritableDirectory}""");
-    logger.Log(LogCategory.Guard, "The Distribution Synchronisation, The Log And Lock Files, And The Self-Update All Require Write Access To That Directory");
-    logger.Log(LogCategory.Guard, OperatingSystem.IsWindows() ? "Move COMPEL To A Directory The Host Account Can Write To, Then Start It Again" : "Grant The Account Running COMPEL Write Access To That Directory, Then Start It Again");
+
+    if (unwritableDirectory == installationDirectory)
+    {
+        logger.Log(LogCategory.Guard, "The Distribution Synchronisation, The Log And Lock Files, And The Self-Update All Require Write Access To That Directory");
+        logger.Log(LogCategory.Guard, OperatingSystem.IsWindows() ? "Move COMPEL To A Directory The Host Account Can Write To, Then Start It Again" : "Grant The Account Running COMPEL Write Access To That Directory, Then Start It Again");
+    }
+
+    else
+    {
+        logger.Log(LogCategory.Guard, "The Match Server Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath That Directory");
+        logger.Log(LogCategory.Guard, @"Grant The Account Running COMPEL Write Access To That Directory, Or Set ""RuntimeArtefactsPath"" To A Directory It Can Write To, Then Start It Again");
+    }
 
     return;
 }
