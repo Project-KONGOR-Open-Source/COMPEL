@@ -53,8 +53,8 @@ public sealed class MatchServerManagerOptions
 
     /// <summary>
     ///     The base directory beneath which the match server manager and servers write their runtime artefacts (replays and logs). This value is either the alias "DEFAULT" or a fully qualified path used as the base profile directory.
-    ///     "DEFAULT" places the artefacts beneath the host account's profile (its "Documents/Heroes of Newerth x64" tree), which is where Heroes Of Newerth writes everything else.
-    ///     This applies on Windows only; the Linux server build writes to a fixed location and ignores this setting.
+    ///     "DEFAULT" places the artefacts beneath the host account's profile (its "HON" folder on Windows and its ".HON" folder on Linux), which is where Heroes Of Newerth writes everything else.
+    ///     This applies on every platform.
     /// </summary>
     public string RuntimeArtefactsPath { get; set; } = "DEFAULT";
 }

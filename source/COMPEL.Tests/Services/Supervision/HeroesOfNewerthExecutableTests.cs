@@ -6,6 +6,12 @@ namespace COMPEL.Tests.Services.Supervision;
 public sealed class HeroesOfNewerthExecutableTests
 {
     [Test]
+    public async Task The_Executable_Has_No_Architecture_In_Its_Name()
+    {
+        await Assert.That(HeroesOfNewerthExecutable.FileName).IsEqualTo(OperatingSystem.IsWindows() ? "hon.exe" : "hon");
+    }
+
+    [Test]
     public async Task A_Directory_Whose_Path_Contains_A_Whitespace_Character_Supports_Instance_Launching()
     {
         await Assert.That(HeroesOfNewerthExecutable.CanLaunchInstancesFrom(@"C:\Games\HoN Match Server")).IsTrue();

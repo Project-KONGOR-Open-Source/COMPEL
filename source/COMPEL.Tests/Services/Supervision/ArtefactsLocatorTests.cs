@@ -9,46 +9,42 @@ public sealed class ArtefactsLocatorTests
         => new (Options.Create(new MatchServerManagerOptions { RuntimeArtefactsPath = runtimeArtefactsPath }));
 
     [Test]
-    public async Task On_Windows_The_Default_Alias_Places_Artefacts_Beneath_The_User_Profile()
+    public async Task The_Default_Alias_Places_Artefacts_In_The_Heroes_Of_Newerth_Root_Of_The_User_Profile()
     {
-        if (OperatingSystem.IsWindows() is false)
-            return;
-
         ArtefactsLocator locator = Locator("DEFAULT");
 
         string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
+        // Heroes Of Newerth Keeps Its Root In "HON" Beneath The Profile On Windows And In ".HON" On Linux, For Every Role
+        string root = OperatingSystem.IsWindows() ? "HON" : ".HON";
+
         using (Assert.Multiple())
         {
             await Assert.That(locator.ProfileDirectory).IsEqualTo(profile);
-            await Assert.That(locator.ArtefactsDirectory).IsEqualTo(Path.Combine(profile, "Documents", "Heroes of Newerth x64"));
-            await Assert.That(locator.RuntimeArtefactsPathApplies).IsTrue();
+            await Assert.That(locator.ArtefactsDirectory).IsEqualTo(Path.Combine(profile, root));
         }
     }
 
     [Test]
-    public async Task On_Windows_A_Literal_Path_Is_Used_As_The_Profile_Directory()
+    public async Task A_Literal_Path_Is_Used_As_The_Profile_Directory_On_Every_Platform()
     {
-        if (OperatingSystem.IsWindows() is false)
-            return;
+        string profile = Path.Combine(Path.GetTempPath(), "HON Server");
 
-        ArtefactsLocator locator = Locator(@"D:\HONServer");
-
-        await Assert.That(locator.ProfileDirectory).IsEqualTo(@"D:\HONServer");
-    }
-
-    [Test]
-    public async Task On_Linux_The_Artefacts_Directory_Is_The_Fixed_Server_Location_Regardless_Of_Configuration()
-    {
-        if (OperatingSystem.IsLinux() is false)
-            return;
-
-        ArtefactsLocator locator = Locator("DEFAULT");
+        ArtefactsLocator locator = Locator(profile);
 
         using (Assert.Multiple())
         {
-            await Assert.That(locator.ArtefactsDirectory).IsEqualTo("/opt/hon/config");
-            await Assert.That(locator.RuntimeArtefactsPathApplies).IsFalse();
+            await Assert.That(locator.ProfileDirectory).IsEqualTo(profile);
+            await Assert.That(locator.ArtefactsDirectory).IsEqualTo(Path.Combine(profile, OperatingSystem.IsWindows() ? "HON" : ".HON"));
         }
+    }
+
+    [Test]
+    public async Task The_Replays_Directory_Is_The_Match_Servers_Own_Beneath_The_Root()
+    {
+        ArtefactsLocator locator = Locator("DEFAULT");
+
+        // The Root Also Holds The Game Client's And The Editors' Folders On A Machine That Plays As Well As Hosts, So Only The Match Servers' Replays Are Swept
+        await Assert.That(locator.ReplaysDirectory).IsEqualTo(Path.Combine(locator.ArtefactsDirectory, "server", "replays"));
     }
 }

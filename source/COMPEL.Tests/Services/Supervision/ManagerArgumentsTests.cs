@@ -50,7 +50,7 @@ public sealed class ManagerArgumentsTests
         using (Assert.Multiple())
         {
             await Assert.That(modIndex).IsGreaterThanOrEqualTo(0);
-            await Assert.That(arguments[modIndex + 1]).IsEqualTo("base;game;server");
+            await Assert.That(arguments[modIndex + 1]).IsEqualTo("base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager");
         }
     }
 

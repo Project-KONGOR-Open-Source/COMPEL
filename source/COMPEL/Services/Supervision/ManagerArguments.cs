@@ -6,7 +6,7 @@ namespace COMPEL.Services.Supervision;
 public static class ManagerArguments
 {
     /// <summary>
-    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-mod", "base;game;server".
+    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager".
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
     public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort)
@@ -69,8 +69,8 @@ public static class ManagerArguments
             "-execute", '"' + execute + '"',
             "-masterserver", masterServerHostAndPort,
 
-            // Directs The Manager To Write User Artefacts Beneath The "server" Subdirectory Rather Than The Game Client Default
-            "-mod", "base;game;server"
+            // The Stack Of WILLOWMAKER's Game Client With The Manager's Own Folder On Top: The KONGOR Folders, With "KONGOR/extensions" Last, Hold COMPEL's Configuration File And The Shipped Updates, And The Manager Writes To "server-manager", Beside Its Match Servers' "server"
+            "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager"
         ];
     }
 

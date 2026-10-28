@@ -188,9 +188,13 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
             previous.Dispose();
         }
 
-        // Best-Effort: Heroes Of Newerth Creates Its Own Artefacts Directory On Launch, So A Failure To Pre-Create It (For Example A Permissions Issue On The Fixed Linux Location) Must Not Block The Launch
+        // Best-Effort: Heroes Of Newerth Creates Its Own Artefacts Directory On Launch, So A Failure To Pre-Create It (For Example A Permissions Issue On The Home Directory) Must Not Block The Launch
         try { Directory.CreateDirectory(artefacts.ArtefactsDirectory); }
         catch (Exception exception) { logger.LogDebug(exception, "Could Not Pre-Create The Artefacts Directory {Directory}", artefacts.ArtefactsDirectory); }
+
+        // The Manager And Its Match Servers Run COMPEL's Configuration File At The End Of Their Start-Up, So It Is Rewritten Before Every Launch, Once Synchronisation Has Settled The Installation
+        try { CustomConfiguration.Write(distribution.InstallationDirectory); }
+        catch (Exception exception) { logger.LogWarning(exception, "Could Not Write The Custom Configuration File Into {Directory}", distribution.InstallationDirectory); }
 
         // Sweep Before Every Launch, Not Only At Startup: A Previous Manager's Spawned Servers Can Be Reparented (For Example To The Init Process) And So Escape "Process.Kill(entireProcessTree)", Leaving Them Holding The Ports This Launch Is About To Bind
         KillOrphanedProcesses();
@@ -211,7 +215,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
             foreach (string argument in arguments)
                 startInfo.ArgumentList.Add(argument);
 
-        // Heroes Of Newerth Derives Its Documents Tree From The Home Directory, So The Child's Home Is Redirected To The Resolved Artefacts Location
+        // Heroes Of Newerth Keeps Its Root Beneath The Home Directory, So The Child's Home Is Redirected To The Resolved Profile Directory
         if (OperatingSystem.IsWindows())
             startInfo.EnvironmentVariables["USERPROFILE"] = artefacts.ProfileDirectory;
         else
@@ -405,8 +409,5 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         );
 
         logger.LogInformation("Runtime Artefacts Directory: {Directory}", artefacts.ArtefactsDirectory);
-
-        if (artefacts.RuntimeArtefactsPathApplies is false)
-            logger.LogInformation(@"The ""RuntimeArtefactsPath"" Setting Does Not Apply On This Platform; The Heroes Of Newerth Server Build Writes To A Fixed Location");
     }
 }

@@ -1,7 +1,7 @@
 namespace COMPEL.Services.Maintenance;
 
 /// <summary>
-///     Periodically removes the working directories of old replays beneath the artefacts directory, faithfully reproducing the legacy COMPEL's maintenance loop.
+///     Periodically removes the working directories of old replays beneath the match servers' replays directory, faithfully reproducing the legacy COMPEL's maintenance loop.
 ///     Unlike the original, the loop is bounded by the host's stopping token rather than running forever.
 /// </summary>
 public sealed class MaintenanceService : BackgroundService
@@ -32,7 +32,7 @@ public sealed class MaintenanceService : BackgroundService
 
     private void CleanUpOldReplays()
     {
-        string directory = artefacts.ArtefactsDirectory;
+        string directory = artefacts.ReplaysDirectory;
 
         if (Directory.Exists(directory) is false)
             return;

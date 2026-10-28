@@ -40,15 +40,12 @@ public static class WriteAccessGuard
 
     /// <summary>
     ///     Returns the first directory COMPEL must be able to write to but cannot, or <see langword="null"/> when every one of them is writable.
-    ///     On Linux the match server writes its runtime artefacts to a fixed location regardless of the home directory it is given, so that location is checked as well as the installation directory.
+    ///     The match server writes its runtime artefacts beneath the home directory it is given, on every platform, which COMPEL creates before every launch, so only the installation directory is checked.
     /// </summary>
     public static string? FindUnwritableDirectory(string installationDirectory)
     {
         if (CanWriteTo(installationDirectory) is false)
             return installationDirectory;
-
-        if (OperatingSystem.IsLinux() && CanWriteTo(ArtefactsLocator.LinuxServerArtefactsDirectory) is false)
-            return ArtefactsLocator.LinuxServerArtefactsDirectory;
 
         return null;
     }

@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Proxy;
 
 /// <summary>
-///     A test double representing the Heroes of Newerth client's challenge retention rules.
+///     A test double representing the Heroes Of Newerth client's challenge retention rules.
 ///     The native client keys challenges per destination address and port, and accepts a replacement challenge only when its server creation timestamp is strictly greater than the one it currently holds.
 /// </summary>
 public sealed class ClientChallengeStoreDouble
