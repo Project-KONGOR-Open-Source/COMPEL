@@ -6,7 +6,7 @@ namespace COMPEL.Services.Supervision;
 public static class ManagerArguments
 {
     /// <summary>
-    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager".
+    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager".
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
     public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort)
@@ -68,6 +68,9 @@ public static class ManagerArguments
             "-noconfig",
             "-execute", '"' + execute + '"',
             "-masterserver", masterServerHostAndPort,
+
+            // The Match Server Manager Passes The Ascension Server Address On To Its Match Servers, Which Make A Call There For Each New Match; This Address Needs To Be Routed To The Project KONGOR Master Server To Avoid A Time Out At Match Start Time, Since The Call Would Otherwise Be Made To A Dead Host
+            "-ascensionserver", masterServerHostAndPort,
 
             // The Stack Of WILLOWMAKER's Game Client With The Manager's Own Folder On Top: The KONGOR Folders, With "KONGOR/extensions" Last, Hold COMPEL's Configuration File And The Shipped Updates, And The Manager Writes To "server-manager", Beside Its Match Servers' "server"
             "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager"

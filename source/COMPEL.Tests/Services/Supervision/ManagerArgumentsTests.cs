@@ -41,6 +41,20 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
+    public async Task The_Ascension_Server_Is_The_Master_Server()
+    {
+        string[] arguments = Build();
+
+        int ascensionIndex = Array.IndexOf(arguments, "-ascensionserver");
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(ascensionIndex).IsGreaterThanOrEqualTo(0);
+            await Assert.That(arguments[ascensionIndex + 1]).IsEqualTo("api.kongor.net");
+        }
+    }
+
+    [Test]
     public async Task The_Argument_Vector_Carries_The_Mod_Stack()
     {
         string[] arguments = Build();
