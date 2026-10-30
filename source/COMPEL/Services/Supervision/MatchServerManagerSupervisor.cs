@@ -57,6 +57,28 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         try { await distribution.WaitUntilReady(stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException) { return; }
 
+        // Prerequisites Belong To The Machine Rather Than To The Distribution, So They Are Checked Once, Before The First Launch; Without One, The Manager Would Fail With The Operating System's Own, Far Less Helpful, Message
+        PrerequisitesCheckResult prerequisites;
+
+        try { prerequisites = await PrerequisitesCheck.Run(distribution.InstallationDirectory, stoppingToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return; }
+
+        switch (prerequisites.Outcome)
+        {
+            case PrerequisitesCheckOutcome.Installed:
+                logger.LogInformation("INIT: Every Prerequisite Is Installed");
+                break;
+
+            case PrerequisitesCheckOutcome.Missing:
+                logger.LogError("FAIL: Missing Prerequisites; The Manager Will Not Be Launched");
+                logger.LogError("{Report}", prerequisites.Report);
+                return;
+
+            default:
+                logger.LogError("FAIL: The Prerequisites Check Could Not Run :: {Report}; The Manager Will Not Be Launched", prerequisites.Report);
+                return;
+        }
+
         // Resolve The Advertised Address, Retrying With Backoff Rather Than Giving Up: A Transient Failure (For Example A DNS Hiccup Or A Public-IP Lookup Timing Out) At Startup Must Not Permanently Disable The Supervisor While COMPEL Keeps Running And Reporting Success
         while (stoppingToken.IsCancellationRequested is false)
         {
@@ -248,16 +270,9 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     /// </summary>
     private void EnsureExecutable(string path)
     {
-        if (OperatingSystem.IsWindows())
-            return;
-
         try
         {
-            UnixFileMode currentMode = File.GetUnixFileMode(path);
-            UnixFileMode executableMode = currentMode | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
-
-            if (executableMode != currentMode)
-                File.SetUnixFileMode(path, executableMode);
+            ExecutePermission.Grant(path);
         }
 
         catch (Exception exception)
