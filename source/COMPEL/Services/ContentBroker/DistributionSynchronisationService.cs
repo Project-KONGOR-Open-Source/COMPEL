@@ -185,9 +185,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
             Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, cancellationToken).ConfigureAwait(false);
 
-            logger.LogInformation("INIT: Manifest Version {Version} Lists {Count} File(s)", manifest.Version, manifest.Files.Count);
+            logger.LogInformation("INIT: Manifest Lists {Count} File(s) For Executable Version {VersionExecutable} With Resources Version {VersionResources}", manifest.Files.Count, manifest.VersionExecutable, manifest.VersionResources);
 
-            DistributionVersion = manifest.Version;
+            DistributionVersion = manifest.VersionExecutable;
 
             // Reported Synchronously So The Per-File Lines Land In The Log In The Order The Broker Raises Them, With The Completion Line Last
             SynchronousProgress<SynchronisationEvent> progress = new (LogSynchronisationEvent);
@@ -255,9 +255,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
             Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, cancellationToken).ConfigureAwait(false);
 
-            logger.LogInformation("INIT: Manifest Version {Version} Lists {Count} File(s)", manifest.Version, manifest.Files.Count);
+            logger.LogInformation("INIT: Manifest Lists {Count} File(s) For Executable Version {VersionExecutable} With Resources Version {VersionResources}", manifest.Files.Count, manifest.VersionExecutable, manifest.VersionResources);
 
-            DistributionVersion = manifest.Version;
+            DistributionVersion = manifest.VersionExecutable;
         }
 
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -284,9 +284,9 @@ public sealed class DistributionSynchronisationService : BackgroundService
             {
                 Manifest manifest = await ContentBroker.FetchManifest(Variant, options.Host, stoppingToken).ConfigureAwait(false);
 
-                DistributionVersion = manifest.Version;
+                DistributionVersion = manifest.VersionExecutable;
 
-                logger.LogInformation("INIT: Manifest Version {Version} Was Recovered Without Synchronising", manifest.Version);
+                logger.LogInformation("INIT: Executable Version {Version} Was Recovered Without Synchronising", manifest.VersionExecutable);
             }
 
             catch (OperationCanceledException)
@@ -323,6 +323,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
             case SynchronisationEventKind.DownloadFailed:
             case SynchronisationEventKind.DeletionFailed:
+            case SynchronisationEventKind.PermissionFailed:
                 logger.LogWarning("FAIL: {Detail}", synchronisationEvent.Detail);
                 break;
 
