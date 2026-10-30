@@ -9,7 +9,7 @@ public sealed class UDPPingResponderTests
     public async Task The_Response_Template_Places_The_Markers_Name_And_Version_At_The_Expected_Offsets()
     {
         const string serverName = "KONGOR ARENA";
-        const string version = "4.10.1";
+        const string version = "5.26.10.31";
 
         byte[] response = UDPPingResponder.BuildResponseTemplate(serverName, version);
 
@@ -31,7 +31,7 @@ public sealed class UDPPingResponderTests
     public async Task A_Version_Longer_Than_Twelve_Bytes_Is_Not_Cropped()
     {
         const string serverName = "KONGOR ARENA";
-        const string version = "4.10.1.20260617";
+        const string version = "5.26.10.31.0000";
 
         byte[] response = UDPPingResponder.BuildResponseTemplate(serverName, version);
 
