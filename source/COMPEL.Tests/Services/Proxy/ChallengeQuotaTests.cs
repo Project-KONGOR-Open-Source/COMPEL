@@ -24,8 +24,17 @@ public sealed class ChallengeQuotaTests
         using (Assert.Multiple())
         {
             await Assert.That(ChallengeQuota.ForKind(ProxyForwarderKind.Game, referenceRefresh)).IsEqualTo((ushort)720);
-            await Assert.That(ChallengeQuota.ForKind(ProxyForwarderKind.Voice, referenceRefresh)).IsEqualTo((ushort)50);
             await Assert.That(ChallengeQuota.GameCommandForInterval(referenceRefresh)).IsEqualTo((ushort)40);
+        }
+    }
+
+    [Test]
+    public async Task Voice_Is_Quoted_Forty_Packets_A_Second()
+    {
+        using (Assert.Multiple())
+        {
+            await Assert.That(ChallengeQuota.ForKind(ProxyForwarderKind.Voice, TimeSpan.FromSeconds(5))).IsEqualTo((ushort)200);
+            await Assert.That(ChallengeQuota.ForKind(ProxyForwarderKind.Voice, TimeSpan.FromSeconds(10))).IsEqualTo((ushort)400);
         }
     }
 

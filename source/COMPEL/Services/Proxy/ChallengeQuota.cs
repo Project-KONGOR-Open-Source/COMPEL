@@ -13,8 +13,8 @@ internal static class ChallengeQuota
     // "CHALLENGE_MAX_GAME_CMD_CTR" (40) Over The Reference's Nominal Five-Second Refresh; Effectively About 6.7 A Second Rather Than 8, For The Same Reason As "GamePacketsPerSecond"
     internal const int GameCommandPacketsPerSecond = 8;
 
-    // "CHALLENGE_MAX_CTR_VOICE" (50) Over The Reference's Nominal Five-Second Refresh; Effectively About 8.3 A Second Rather Than 10, For The Same Reason As "GamePacketsPerSecond"
-    internal const int VoicePacketsPerSecond = 10;
+    // Above The Reference's "CHALLENGE_MAX_CTR_VOICE" Rate Because A Client Packs Only Two Voice Frames Into Each Packet; Voice Keeps Its Flood Protection
+    internal const int VoicePacketsPerSecond = 40;
 
     // "MAX_CTR_UNAUTHENTICATED": A Total For The Whole Unauthenticated State Rather Than A Rate, So It Is Not Derived
     internal const ushort UnauthenticatedPacketQuota = 100;
