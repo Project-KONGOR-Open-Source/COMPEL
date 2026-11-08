@@ -51,7 +51,7 @@ public static class ManagerArguments
             ["svr_location"]            = options.Location.ToUpperInvariant(),
             ["svr_ip"]                  = serverAddress,
 
-            // Setting Affinity To "-1" Is Required So The Manager Can Assign Affinity To Its Child Processes
+            // Leaves The Manager's CPU To The Operating System, As Every HON Process Does, And The Match Servers It Starts Are Not Pinned Either
             ["host_affinity"]           = "-1",
 
             ["upd_checkForUpdates"]     = "false",
