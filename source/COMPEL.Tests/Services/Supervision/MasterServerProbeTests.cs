@@ -35,8 +35,8 @@ public sealed class MasterServerProbeTests
         using (Assert.Multiple())
         {
             await Assert.That(reachable).IsTrue();
-            await Assert.That(handler.Request!.Method).IsEqualTo(HttpMethod.Head);
-            await Assert.That(handler.Request!.RequestUri!.ToString()).IsEqualTo("http://localhost:5555/health");
+            await Assert.That(handler.Request?.Method).IsEqualTo(HttpMethod.Head);
+            await Assert.That(handler.Request?.RequestUri?.ToString()).IsEqualTo("http://localhost:5555/health");
         }
     }
 

@@ -7,7 +7,7 @@ namespace COMPEL.Services.Supervision;
 public static class ConsoleEscaping
 {
     /// <summary>
-    ///     The longest command the console accepts; a longer command is refused whole.
+    ///     The length at which the console refuses a command; a command of this length or longer is refused whole.
     /// </summary>
     public const int CommandLimit = 2048;
 

@@ -95,7 +95,7 @@ public sealed class PortPlanTests
 
                     PortPlan plan = new (options);
 
-                    // Every Plan Is Compared With Every Other Plan, As Two Installations On One Machine Share Nothing But The Port Space
+                    // Every Plan Is Compared With The Plans At A Few Other Offsets, As Two Installations On One Machine Share Nothing But The Port Space
                     foreach (int otherOffset in new[] { 0, offset, PortPlan.PortRangeWindow })
                     {
                         PortPlan other = new (instances, otherOffset, useProxy);
