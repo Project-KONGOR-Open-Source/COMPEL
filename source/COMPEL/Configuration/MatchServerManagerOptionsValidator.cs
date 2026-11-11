@@ -4,15 +4,15 @@ namespace COMPEL.Configuration;
 ///     Validates <see cref="MatchServerManagerOptions"/> at startup, reproducing the pre-flight checks the legacy COMPEL performed before launching the manager.
 ///     Unlike the legacy implementation, which exited the process on the first failure, this collects every failure so the operator sees all configuration problems at once.
 /// </summary>
-public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchServerManagerOptions>
+public sealed partial class MatchServerManagerOptionsValidator : IValidateOptions<MatchServerManagerOptions>
 {
     private static readonly string[] SupportedLocations = [ "USW", "USE", "EU", "AU", "BR", "RU", "SEA", "NEWERTH" ];
 
     private static readonly string[] SupportedAliases = [ "DEFAULT" ];
 
-    // These Characters Would Corrupt The Manager's "-execute" CVar String: A Double Quote Can Terminate Its Quoted Argument Early, And A Semicolon Is The CVar-Command Separator
-    // A Control Character (For Example A Newline Or Tab) Is Re-Tokenised As Whitespace By The CVar Parser And Silently Truncates The Value, So It Is Rejected Too
-    private static readonly char[] UnsafeManagerArgumentCharacters = [ '"', ';' ];
+    // The Characters NEXUS Accepts In An Account Name; Its Lengths Differ Between Development And Production, So They Are Not Checked Here
+    [GeneratedRegex(@"^[a-zA-Z0-9_\-]+\z")]
+    private static partial Regex AccountNamePattern();
 
     public ValidateOptionsResult Validate(string? name, MatchServerManagerOptions options)
     {
@@ -24,8 +24,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         else if (options.UserName.Equals("USERNAME", StringComparison.OrdinalIgnoreCase))
             failures.Add(@"""UserName"" Is Still The Default Placeholder; Set It To A Registered Project KONGOR User");
 
-        else if (ContainsUnsafeManagerArgumentCharacter(options.UserName) || ContainsWhitespace(options.UserName))
-            failures.Add(@"""UserName"" Must Not Contain Whitespace, A Double Quote, A Semicolon, Or A Control Character");
+        else if (AccountNamePattern().IsMatch(options.UserName) is false)
+            failures.Add(@"""UserName"" May Only Contain Letters, Numbers, Underscores, And Hyphens, Like A Project KONGOR Account Name");
 
         if (string.IsNullOrWhiteSpace(options.Password))
             failures.Add(@"""Password"" Must Be Provided");
@@ -33,8 +33,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         else if (options.Password.Equals("PASSWORD", StringComparison.OrdinalIgnoreCase))
             failures.Add(@"""Password"" Is Still The Default Placeholder; Set It To The User's Password");
 
-        else if (ContainsUnsafeManagerArgumentCharacter(options.Password) || ContainsWhitespace(options.Password))
-            failures.Add(@"""Password"" Must Not Contain Whitespace, A Double Quote, A Semicolon, Or A Control Character");
+        else if (options.Password.Contains((char)0))
+            failures.Add(@"""Password"" Must Not Contain A NUL Character");
 
         int processorCount = Environment.ProcessorCount;
 
@@ -62,8 +62,8 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         if (string.IsNullOrWhiteSpace(options.ServerNamePrefix))
             failures.Add(@"""ServerNamePrefix"" Must Be Provided");
 
-        else if (ContainsUnsafeManagerArgumentCharacter(options.ServerNamePrefix))
-            failures.Add(@"""ServerNamePrefix"" Must Not Contain A Double Quote, Semicolon, Or Control Character");
+        else if (options.ServerNamePrefix.Contains((char)0))
+            failures.Add(@"""ServerNamePrefix"" Must Not Contain A NUL Character");
 
         if (options.PortRangeOffset < 0)
             failures.Add(@"""PortRangeOffset"" Must Not Be Negative");
@@ -86,12 +86,17 @@ public sealed class MatchServerManagerOptionsValidator : IValidateOptions<MatchS
         else if (SupportedAliases.Contains(options.RuntimeArtefactsPath.ToUpperInvariant()) is false && Path.IsPathFullyQualified(options.RuntimeArtefactsPath) is false)
             failures.Add($@"""RuntimeArtefactsPath"" ""{options.RuntimeArtefactsPath}"" Is Not Valid; Use The ""DEFAULT"" Alias Or A Fully Qualified Path");
 
+        // The Console Refuses A Command Longer Than Its Limit Whole, Which Would Start The Manager With None Of COMPEL's Settings; The Widest Address Gives The Longest Payload
+        // This Runs Last, Because Building The Arguments Needs Options That Passed Every Other Check
+        if (failures.Count is 0)
+        {
+            string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway));
+            int commandLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length;
+
+            if (commandLength >= ConsoleEscaping.CommandLimit)
+                failures.Add($@"The Settings Passed To The Manager Take {commandLength} Characters, Which Reaches The Console's Limit Of {ConsoleEscaping.CommandLimit}; Shorten ""UserName"", ""Password"", Or ""ServerNamePrefix""");
+        }
+
         return failures.Count is 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
-
-    private static bool ContainsUnsafeManagerArgumentCharacter(string value)
-        => value.IndexOfAny(UnsafeManagerArgumentCharacters) >= 0 || value.Any(char.IsControl);
-
-    // The Manager's "Set" Command Splits Its Value On Whitespace And Drops The Final Token, Which Is Why The Server Name Carries Workaround Tokens; A Credential Cannot Carry Them, So Whitespace Is Rejected Outright Rather Than Being Silently Truncated
-    private static bool ContainsWhitespace(string value) => value.Any(char.IsWhiteSpace);
 }

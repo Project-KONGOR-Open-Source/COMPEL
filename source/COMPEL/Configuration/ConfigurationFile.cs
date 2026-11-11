@@ -25,7 +25,7 @@ public sealed class ConfigurationFile
 public sealed class UserNameSetting
 {
     public string Value { get; set; } = "USERNAME";
-    public string Description => "The name of the user which will host the game servers. This needs to match the name of a registered Project KONGOR user.";
+    public string Description => "The name of the user which will host the game servers. This needs to match the name of a registered Project KONGOR user, so it can only contain letters, numbers, underscores, and hyphens.";
 }
 
 public sealed class PasswordSetting

@@ -7,6 +7,7 @@ public static class ManagerArguments
 {
     /// <summary>
     ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager".
+    ///     Every value in the "-execute" payload is escaped with <see cref="ConsoleEscaping.Escape"/>, so any character a value holds reaches the manager as written.
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
     public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort)
@@ -16,11 +17,11 @@ public static class ManagerArguments
         // The Order Of These Settings Is Immaterial: Each "Set" Command Is Applied Independently By The Manager
         Dictionary<string, string> settings = new ()
         {
-            // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Manager Appends An Incremental Index To This Value
             // The Manager Opens This Port Itself And Exits When It Cannot
             ["man_port"]                = ports.ManagerPort.ToString(),
 
-            ["man_masterLogin"]         = options.UserName + ":",
+            // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Manager Appends An Incremental Index To This Value
+            ["man_masterLogin"]        = options.UserName + ":",
             ["man_masterPassword"]      = options.Password,
             ["man_numSlaveAccounts"]    = options.Instances.ToString(),
             ["man_startServerPort"]     = ports.LocalGameStart.ToString(),
@@ -49,7 +50,7 @@ public static class ManagerArguments
             ["man_uploadToCDNOnDemand"] = "0",
 
             // Any Server Configuration Options Other Than The Following Are Ignored By The Manager
-            ["svr_name"]                = ServerNameWithWhitespaceWorkaround(options.ServerNamePrefix),
+            ["svr_name"]                = options.ServerNamePrefix,
             // The Validator Accepts The Location In Any Case, But The Master Server Compares Regions Exactly
             ["svr_location"]            = options.Location.ToUpperInvariant(),
             ["svr_ip"]                  = serverAddress,
@@ -63,7 +64,7 @@ public static class ManagerArguments
             ["svr_port"]                = ports.PingPort.ToString()
         };
 
-        string execute = string.Join(';', settings.Select(setting => $"Set {setting.Key} {setting.Value}"));
+        string execute = string.Join(';', settings.Select(setting => $"Set {setting.Key} {ConsoleEscaping.Escape(setting.Value)}"));
 
         return
         [
@@ -78,15 +79,5 @@ public static class ManagerArguments
             // The Stack Of WILLOWMAKER's Game Client With The Manager's Own Folder On Top: The KONGOR Folders, With "KONGOR/extensions" Last, Hold COMPEL's Configuration File And The Shipped Updates, And The Manager Writes To "server-manager", Beside Its Match Servers' "server"
             "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager"
         ];
-    }
-
-    /// <summary>
-    ///     Appends two workaround tokens to the server name. The manager's "-execute"/"Set" handling drops the last whitespace-delimited token, and the manager drops one again when it spawns each dedicated instance, so two trailing tokens are needed for a multi-word server name to survive intact.
-    /// </summary>
-    public static string ServerNameWithWhitespaceWorkaround(string desiredServerName)
-    {
-        const string workaroundParameter = "0";
-
-        return $"{desiredServerName} {workaroundParameter} {workaroundParameter}";
     }
 }

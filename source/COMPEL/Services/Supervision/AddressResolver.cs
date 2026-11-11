@@ -29,7 +29,7 @@ public sealed class AddressResolver
         this.logger = logger;
     }
 
-    private bool GatewayIsLocalhost => manager.Gateway.ToUpperInvariant() is "LOCALHOST" or "127.0.0.1";
+    private static bool GatewayIsLocal(string gateway) => gateway.ToUpperInvariant() is "LOCALHOST" or "127.0.0.1";
 
     /// <summary>
     ///     Resolves the server's own advertised IPv4 address. The result is cached for the lifetime of the process.
@@ -75,7 +75,12 @@ public sealed class AddressResolver
     /// <summary>
     ///     The master server host and port passed to the manager via the "-masterserver" argument. The public gateway takes no explicit port; the local gateway uses the local NEXUS port.
     /// </summary>
-    public string MasterServerHostAndPort => GatewayIsLocalhost ? $"{LocalMasterServerAddress}:{LocalMasterServerPort}" : PublicMasterServerAddress;
+    public string MasterServerHostAndPort => MasterServerHostAndPortFor(manager.Gateway);
+
+    /// <summary>
+    ///     The master server host and port the given gateway leads to.
+    /// </summary>
+    public static string MasterServerHostAndPortFor(string gateway) => GatewayIsLocal(gateway) ? $"{LocalMasterServerAddress}:{LocalMasterServerPort}" : PublicMasterServerAddress;
 
     private async Task<string> DetectPublicIPAddress(CancellationToken cancellationToken)
     {

@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Configuration;
 
 /// <summary>
-///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the rejection of whitespace in credentials, the supported locations and artefacts-path alias, and the port-range-offset boundary.
+///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the refusal of a NUL character and of a user name outside the account name characters, the supported locations and artefacts-path alias, and the port-range-offset boundary.
 /// </summary>
 public sealed class MatchServerManagerOptionsValidatorTests
 {
@@ -47,21 +47,74 @@ public sealed class MatchServerManagerOptionsValidatorTests
     }
 
     [Test]
-    public async Task A_User_Name_Containing_Whitespace_Is_Rejected()
+    public async Task A_Password_With_Spaces_Quotes_And_Semicolons_Is_Accepted()
     {
         MatchServerManagerOptions options = ValidOptions();
-        options.UserName = "KON GOR";
+        options.Password = @"open ""sesame""; \ $";
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Server_Name_With_Any_Character_Is_Accepted()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.ServerNamePrefix = @"Ünïcødé 名前 ""Arena""; \ $";
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    [Arguments("UserName")]
+    [Arguments("Password")]
+    [Arguments("ServerNamePrefix")]
+    public async Task A_NUL_Character_Is_Refused_In_Every_Value(string setting)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+
+        switch (setting)
+        {
+            case "UserName":         options.UserName = "KON\0GOR"; break;
+            case "Password":         options.Password = "sec\0ret"; break;
+            default:                 options.ServerNamePrefix = "KONGOR\0ARENA"; break;
+        }
 
         await Assert.That(Validate(options).Failed).IsTrue();
     }
 
     [Test]
-    public async Task A_Password_Containing_Whitespace_Is_Rejected()
+    [Arguments("Name With Space")]
+    [Arguments("name.dot")]
+    public async Task A_User_Name_Outside_NEXUS_Account_Name_Characters_Is_Refused(string userName)
     {
         MatchServerManagerOptions options = ValidOptions();
-        options.Password = "open sesame";
+        options.UserName = userName;
 
         await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    public async Task A_User_Name_With_Letters_Digits_Underscores_And_Hyphens_Is_Accepted()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.UserName = "Host_01-A";
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Configuration_Too_Long_For_The_Console_Is_Refused()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.ServerNamePrefix = new string('A', 2000);
+
+        ValidateOptionsResult result = Validate(options);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(result.Failed).IsTrue();
+            await Assert.That(result.FailureMessage?.Contains(ConsoleEscaping.CommandLimit.ToString()) is true).IsTrue();
+        }
     }
 
     [Test]

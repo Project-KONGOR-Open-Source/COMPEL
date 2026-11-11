@@ -59,17 +59,6 @@ if (locationSafety.Verdict is LocationSafetyVerdict.Unsafe)
     return;
 }
 
-// The Manager Spawns Each Server Instance With An Unquoted Executable Path, Which Heroes Of Newerth Only Parses Correctly When That Path Contains A Whitespace Character
-// Refused Up Front Because The Symptom Is Otherwise Silent And Very Hard To Read: The Manager Starts And Registers Normally, But Every Instance Comes Up As A Game Client And Never Binds Its Game Port, So The Host Advertises Servers That No Client Can Join
-if (HeroesOfNewerthExecutable.CanLaunchInstancesFrom(installationDirectory) is false)
-{
-    logger.Log(LogCategory.Guard, $@"COMPEL Will Not Start From ""{installationDirectory}"" Because The Path Contains No Whitespace Character");
-    logger.Log(LogCategory.Guard, "Heroes Of Newerth Requires A Whitespace Character Somewhere In The Path It Is Launched From, Otherwise The Match Server Instances Never Start Correctly");
-    logger.Log(LogCategory.Guard, @"Move COMPEL To A Directory Whose Path Contains A Whitespace Character (For Example ""C:\HoN Match Server""), Then Start It Again");
-
-    return;
-}
-
 // The Control Plane Port Is Validated Here, Ahead Of Kestrel, So An Out-Of-Range Value Produces A Clear Message Rather Than An Unhandled Bind Failure Or A Silent Bind To An Arbitrary Ephemeral Port
 if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 {
