@@ -6,11 +6,11 @@ namespace COMPEL.Services.Supervision;
 public static class ManagerArguments
 {
     /// <summary>
-    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager".
+    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager", "-config", "\"folder\"", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port".
     ///     Every value in the "-execute" payload is escaped with <see cref="ConsoleEscaping.Escape"/>, so any character a value holds reaches the manager as written.
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
-    public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort)
+    public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort, string artefactsDirectory)
     {
         int processorCount = Environment.ProcessorCount;
 
@@ -70,14 +70,17 @@ public static class ManagerArguments
         [
             "-manager",
             "-noconfig",
+
+            // The Stack Of WILLOWMAKER's Game Client With The Manager's Own Folder On Top: The KONGOR Folders, With "KONGOR/extensions" Last, Hold COMPEL's Configuration File And The Shipped Updates, And The Manager Writes To "server-manager", Beside Its Match Servers' "server"
+            "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager",
+
+            // The "-mod" And "-config" Arguments Come Before "-execute", Which Opens The Log In The Folder They Choose; The Folder Is Quoted For The Spaces It May Hold, And Loses A Trailing Separator Because A Backslash Before The Closing Quote Would Escape It
+            "-config", '"' + Path.TrimEndingDirectorySeparator(artefactsDirectory) + '"',
             "-execute", '"' + execute + '"',
             "-masterserver", masterServerHostAndPort,
 
             // The Match Server Manager Passes The Ascension Server Address On To Its Match Servers, Which Make A Call There For Each New Match; This Address Needs To Be Routed To The Project KONGOR Master Server To Avoid A Time Out At Match Start Time, Since The Call Would Otherwise Be Made To A Dead Host
-            "-ascensionserver", masterServerHostAndPort,
-
-            // The Stack Of WILLOWMAKER's Game Client With The Manager's Own Folder On Top: The KONGOR Folders, With "KONGOR/extensions" Last, Hold COMPEL's Configuration File And The Shipped Updates, And The Manager Writes To "server-manager", Beside Its Match Servers' "server"
-            "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager"
+            "-ascensionserver", masterServerHostAndPort
         ];
     }
 }

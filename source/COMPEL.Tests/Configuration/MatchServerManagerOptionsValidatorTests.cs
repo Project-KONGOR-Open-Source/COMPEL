@@ -122,7 +122,7 @@ public sealed class MatchServerManagerOptionsValidatorTests
         MatchServerManagerOptions options = ValidOptions();
         options.ServerNamePrefix = "A";
 
-        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway));
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway), new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
         int baseLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
 
         options.ServerNamePrefix = new string('A', payloadLength - baseLength + 1);

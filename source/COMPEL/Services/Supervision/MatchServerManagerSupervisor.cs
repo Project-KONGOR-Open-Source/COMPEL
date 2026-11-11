@@ -221,7 +221,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         // Sweep Before Every Launch, Not Only At Startup: A Previous Manager's Spawned Servers Can Be Reparented (For Example To The Init Process) And So Escape "Process.Kill(entireProcessTree)", Leaving Them Holding The Ports This Launch Is About To Bind
         KillOrphanedProcesses();
 
-        string[] arguments = ManagerArguments.Build(options, Ports, address, addressResolver.MasterServerHostAndPort);
+        string[] arguments = ManagerArguments.Build(options, Ports, address, addressResolver.MasterServerHostAndPort, artefacts.ArtefactsDirectory);
 
         ProcessStartInfo startInfo = new (executable)
         {
@@ -236,12 +236,6 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         else
             foreach (string argument in arguments)
                 startInfo.ArgumentList.Add(argument);
-
-        // Heroes Of Newerth Keeps Its Root Beneath The Home Directory, So The Child's Home Is Redirected To The Resolved Profile Directory
-        if (OperatingSystem.IsWindows())
-            startInfo.EnvironmentVariables["USERPROFILE"] = artefacts.ProfileDirectory;
-        else
-            startInfo.EnvironmentVariables["HOME"] = artefacts.ProfileDirectory;
 
         Process process = new () { StartInfo = startInfo, EnableRaisingEvents = true };
 

@@ -90,7 +90,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
         // This Runs Last, Because Building The Arguments Needs Options That Passed Every Other Check
         if (failures.Count is 0)
         {
-            string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway));
+            string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway), new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
 
             // The Console Reads The Payload Without Its Surrounding Quotes
             int commandLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;

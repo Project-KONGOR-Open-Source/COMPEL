@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
-///     Verifies where the artefacts locator resolves the child process's profile and artefacts directories on each platform.
+///     Verifies where the artefacts locator resolves the artefacts directory on each platform.
 /// </summary>
 public sealed class ArtefactsLocatorTests
 {
@@ -20,13 +20,12 @@ public sealed class ArtefactsLocatorTests
 
         using (Assert.Multiple())
         {
-            await Assert.That(locator.ProfileDirectory).IsEqualTo(profile);
             await Assert.That(locator.ArtefactsDirectory).IsEqualTo(Path.Combine(profile, root));
         }
     }
 
     [Test]
-    public async Task A_Literal_Path_Is_Used_As_The_Profile_Directory_On_Every_Platform()
+    public async Task A_Literal_Path_Places_The_Heroes_Of_Newerth_Root_Beneath_It_On_Every_Platform()
     {
         string profile = Path.Combine(Path.GetTempPath(), "HON Server");
 
@@ -34,7 +33,6 @@ public sealed class ArtefactsLocatorTests
 
         using (Assert.Multiple())
         {
-            await Assert.That(locator.ProfileDirectory).IsEqualTo(profile);
             await Assert.That(locator.ArtefactsDirectory).IsEqualTo(Path.Combine(profile, OperatingSystem.IsWindows() ? "HON" : ".HON"));
         }
     }

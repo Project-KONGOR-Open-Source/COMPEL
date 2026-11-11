@@ -19,11 +19,13 @@ public sealed class ManagerArgumentsTests
         RuntimeArtefactsPath = "DEFAULT"
     };
 
+    private static string ArtefactsDirectory => Path.Combine(Path.GetTempPath(), OperatingSystem.IsWindows() ? "HON" : ".HON");
+
     private static string[] Build()
     {
         MatchServerManagerOptions options = SampleOptions();
 
-        return ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net");
+        return ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory);
     }
 
     [Test]
@@ -94,7 +96,7 @@ public sealed class ManagerArgumentsTests
         MatchServerManagerOptions options = SampleOptions();
         options.Location = "eu";
 
-        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net"));
+        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory));
 
         await Assert.That(joined.Contains("Set svr_location EU")).IsTrue();
     }
@@ -121,7 +123,7 @@ public sealed class ManagerArgumentsTests
         MatchServerManagerOptions options = SampleOptions();
         options.ServerNamePrefix = "My Server Name";
 
-        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net"));
+        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory));
 
         using (Assert.Multiple())
         {
@@ -136,7 +138,7 @@ public sealed class ManagerArgumentsTests
         MatchServerManagerOptions options = SampleOptions();
         options.Password = @"abc\";
 
-        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net");
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory);
         string payload = arguments[Array.IndexOf(arguments, "-execute") + 1];
 
         using (Assert.Multiple())
@@ -152,5 +154,54 @@ public sealed class ManagerArgumentsTests
         string joined = string.Join(' ', Build());
 
         await Assert.That(joined.Contains("Set man_port 1135")).IsTrue();
+    }
+
+    [Test]
+    public async Task The_User_Folder_Is_Passed_With_Config()
+    {
+        string[] arguments = Build();
+
+        int configIndex = Array.IndexOf(arguments, "-config");
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(configIndex).IsGreaterThanOrEqualTo(0);
+            await Assert.That(arguments[configIndex + 1]).IsEqualTo('"' + ArtefactsDirectory + '"');
+        }
+    }
+
+    [Test]
+    public async Task A_Runtime_Artefacts_Path_With_A_Space_Is_Quoted()
+    {
+        string runtime = OperatingSystem.IsWindows() ? @"C:\HoN Runtime" : "/srv/hon runtime";
+        string expected = Path.Combine(runtime, OperatingSystem.IsWindows() ? "HON" : ".HON");
+
+        MatchServerManagerOptions options = SampleOptions();
+        options.RuntimeArtefactsPath = runtime;
+
+        string folder = new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory;
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", folder);
+
+        await Assert.That(arguments[Array.IndexOf(arguments, "-config") + 1]).IsEqualTo('"' + expected + '"');
+    }
+
+    [Test]
+    public async Task A_Trailing_Separator_Is_Trimmed_So_The_Closing_Quote_Is_Not_Escaped()
+    {
+        MatchServerManagerOptions options = SampleOptions();
+
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory + Path.DirectorySeparatorChar);
+
+        await Assert.That(arguments[Array.IndexOf(arguments, "-config") + 1]).IsEqualTo('"' + ArtefactsDirectory + '"');
+    }
+
+    [Test]
+    public async Task The_Folder_Arguments_Come_Before_Execute()
+    {
+        string[] arguments = Build();
+
+        string[] flags = arguments.Where(argument => argument.StartsWith('-')).ToArray();
+
+        await Assert.That(string.Join(' ', flags)).IsEqualTo("-manager -noconfig -mod -config -execute -masterserver -ascensionserver");
     }
 }
