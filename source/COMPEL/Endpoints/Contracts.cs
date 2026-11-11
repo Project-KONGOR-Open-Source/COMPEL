@@ -6,7 +6,7 @@ namespace COMPEL.Endpoints;
 public sealed record PingResponse(string Application, string Version, long ServerTimeUnixMilliseconds);
 
 /// <summary>
-///     The game, voice, and ping ports the manager has been allocated. Local ports are what the servers bind; public ports are what clients connect to (equal to the local ports unless the proxy is enabled).
+///     The game, voice, ping, and manager ports the manager has been allocated. Local ports are what the servers bind; public ports are what clients connect to (equal to the local ports unless the proxy is enabled).
 /// </summary>
 public sealed record PortAllocationResponse
 (
@@ -14,7 +14,8 @@ public sealed record PortAllocationResponse
     int VoiceStart, int VoiceEnd,
     int PublicGameStart, int PublicGameEnd,
     int PublicVoiceStart, int PublicVoiceEnd,
-    int PingPort
+    int PingPort,
+    int ManagerPort
 );
 
 /// <summary>

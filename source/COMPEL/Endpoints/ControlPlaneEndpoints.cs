@@ -35,7 +35,8 @@ public static class ControlPlaneEndpoints
                 PublicGameEnd:    ports.PublicGameEnd,
                 PublicVoiceStart: ports.PublicVoiceStart,
                 PublicVoiceEnd:   ports.PublicVoiceEnd,
-                PingPort:         ports.PingPort
+                PingPort:         ports.PingPort,
+                ManagerPort:      ports.ManagerPort
             );
 
             StatusResponse status = new

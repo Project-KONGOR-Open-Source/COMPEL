@@ -80,7 +80,7 @@ public sealed class UseProxySetting
 public sealed class PortRangeOffsetSetting
 {
     public int Value { get; set; }
-    public string Description => "The offset from the start of the valid game/voice port ranges at which the game/voice ports to be used at runtime will start. The game/voice port ranges without the proxy are 11235-11335/11435-11535, and with the proxy they are 21235-21335/21435-21535.";
+    public string Description => "The offset from the start of the valid game/voice port ranges at which the game/voice ports to be used at runtime will start; it also moves the match server manager's own port. The game/voice port ranges without the proxy are 11235-11335/11435-11535, and with the proxy they are 21235-21335/21435-21535.";
 }
 
 public sealed class RuntimeArtefactsPathSetting

@@ -429,10 +429,10 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         logger.LogInformation
         (
-            "Port Allocation: Game {LocalGameStart}-{LocalGameEnd}, Voice {LocalVoiceStart}-{LocalVoiceEnd}, Public Game {PublicGameStart}-{PublicGameEnd}, Public Voice {PublicVoiceStart}-{PublicVoiceEnd}, Ping {PingPort}{ProxyNote}",
+            "Port Allocation: Game {LocalGameStart}-{LocalGameEnd}, Voice {LocalVoiceStart}-{LocalVoiceEnd}, Public Game {PublicGameStart}-{PublicGameEnd}, Public Voice {PublicVoiceStart}-{PublicVoiceEnd}, Ping {PingPort}, Manager {ManagerPort}{ProxyNote}",
             Ports.LocalGameStart, Ports.LocalGameEnd, Ports.LocalVoiceStart, Ports.LocalVoiceEnd,
             Ports.PublicGameStart, Ports.PublicGameEnd, Ports.PublicVoiceStart, Ports.PublicVoiceEnd,
-            Ports.PingPort, Ports.UseProxy ? " (Proxy Enabled)" : string.Empty
+            Ports.PingPort, Ports.ManagerPort, Ports.UseProxy ? " (Proxy Enabled)" : string.Empty
         );
 
         logger.LogInformation("Runtime Artefacts Directory: {Directory}", artefacts.ArtefactsDirectory);
