@@ -122,4 +122,12 @@ public sealed class ManagerArgumentsTests
 
         await Assert.That(result).IsEqualTo("KONGOR ARENA 0 0");
     }
+
+    [Test]
+    public async Task The_Manager_Port_Comes_From_The_Port_Plan()
+    {
+        string joined = string.Join(' ', Build());
+
+        await Assert.That(joined.Contains("Set man_port 1135")).IsTrue();
+    }
 }

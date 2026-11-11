@@ -353,7 +353,25 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     {
         managerRunning = false;
 
+        if (desiredRunning)
+            LogExit(sender);
+
         reconcileSignal.Release();
+    }
+
+    private void LogExit(object? sender)
+    {
+        // The Process Object Can Be Disposed By A Concurrent Stop Or Relaunch, In Which Case The Exit Code Is No Longer Readable
+        try
+        {
+            if (sender is Process process)
+                logger.LogWarning("{ManagerExit}", ManagerExit.Describe(process.ExitCode, Ports));
+        }
+
+        catch (InvalidOperationException)
+        {
+            logger.LogWarning("The Match Server Manager Exited, And Its Exit Code Could Not Be Read");
+        }
     }
 
     /// <summary>

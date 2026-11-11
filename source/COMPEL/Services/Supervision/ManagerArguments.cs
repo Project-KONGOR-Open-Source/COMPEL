@@ -17,6 +17,9 @@ public static class ManagerArguments
         Dictionary<string, string> settings = new ()
         {
             // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Manager Appends An Incremental Index To This Value
+            // The Manager Opens This Port Itself And Exits When It Cannot
+            ["man_port"]                = ports.ManagerPort.ToString(),
+
             ["man_masterLogin"]         = options.UserName + ":",
             ["man_masterPassword"]      = options.Password,
             ["man_numSlaveAccounts"]    = options.Instances.ToString(),
