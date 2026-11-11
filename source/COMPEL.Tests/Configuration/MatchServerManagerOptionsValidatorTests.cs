@@ -117,6 +117,31 @@ public sealed class MatchServerManagerOptionsValidatorTests
         }
     }
 
+    private static MatchServerManagerOptions OptionsWithPayloadLength(int payloadLength)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.ServerNamePrefix = "A";
+
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway));
+        int baseLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
+
+        options.ServerNamePrefix = new string('A', payloadLength - baseLength + 1);
+
+        return options;
+    }
+
+    [Test]
+    public async Task A_Payload_One_Character_Below_The_Console_Limit_Is_Accepted()
+    {
+        await Assert.That(Validate(OptionsWithPayloadLength(ConsoleEscaping.CommandLimit - 1)).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Payload_Exactly_At_The_Console_Limit_Is_Refused()
+    {
+        await Assert.That(Validate(OptionsWithPayloadLength(ConsoleEscaping.CommandLimit)).Failed).IsTrue();
+    }
+
     [Test]
     public async Task An_Unsupported_Location_Is_Rejected()
     {

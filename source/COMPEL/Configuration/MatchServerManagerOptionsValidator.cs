@@ -91,7 +91,9 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
         if (failures.Count is 0)
         {
             string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway));
-            int commandLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length;
+
+            // The Console Reads The Payload Without Its Surrounding Quotes
+            int commandLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
 
             if (commandLength >= ConsoleEscaping.CommandLimit)
                 failures.Add($@"The Settings Passed To The Manager Take {commandLength} Characters, Which Reaches The Console's Limit Of {ConsoleEscaping.CommandLimit}; Shorten ""UserName"", ""Password"", Or ""ServerNamePrefix""");

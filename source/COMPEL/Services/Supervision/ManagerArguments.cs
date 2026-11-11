@@ -21,7 +21,7 @@ public static class ManagerArguments
             ["man_port"]                = ports.ManagerPort.ToString(),
 
             // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Manager Appends An Incremental Index To This Value
-            ["man_masterLogin"]        = options.UserName + ":",
+            ["man_masterLogin"]         = options.UserName + ":",
             ["man_masterPassword"]      = options.Password,
             ["man_numSlaveAccounts"]    = options.Instances.ToString(),
             ["man_startServerPort"]     = ports.LocalGameStart.ToString(),
