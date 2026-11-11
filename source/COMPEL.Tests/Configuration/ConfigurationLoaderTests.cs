@@ -160,4 +160,24 @@ public sealed class ConfigurationLoaderTests
             await Assert.That(message?.StartsWith(@"""COMPEL.json"" Could Not Be Read")).IsTrue();
         }
     }
+
+    [Test]
+    public async Task A_Missing_Master_Server_Setting_Takes_The_Default()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, "{ }");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            await Assert.That(file.MasterServer.Value).IsEqualTo("api.kongor.net");
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

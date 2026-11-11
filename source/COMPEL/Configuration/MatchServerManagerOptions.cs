@@ -27,9 +27,14 @@ public sealed class MatchServerManagerOptions
     public int WarmInstancesTarget { get; set; } = 1;
 
     /// <summary>
-    ///     The entry point for game servers and the server manager: "localhost" for local development, "PUBLIC" to auto-detect the public IP address, a LAN or public IP address, or a host name to resolve.
+    ///     The address players reach the match servers at: "localhost" for local development, "PUBLIC" to auto-detect the public IP address, a LAN or public IP address, or a host name to resolve.
     /// </summary>
     public string Gateway { get; set; } = "kongor.net";
+
+    /// <summary>
+    ///     Where COMPEL and its manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path.
+    /// </summary>
+    public string MasterServer { get; set; } = "api.kongor.net";
 
     /// <summary>
     ///     The server region. In order for the server to be TMM-compatible, only the values "USW", "USE", "EU", "AU", "BR", "RU", "SEA", and "NEWERTH" are valid.

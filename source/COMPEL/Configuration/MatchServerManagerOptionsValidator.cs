@@ -53,6 +53,12 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
         if (string.IsNullOrWhiteSpace(options.Gateway))
             failures.Add(@"""Gateway"" Must Be Provided");
 
+        if (string.IsNullOrWhiteSpace(options.MasterServer))
+            failures.Add(@"""MasterServer"" Must Be Provided");
+
+        else if (IsHostWithOptionalPort(options.MasterServer) is false)
+            failures.Add($@"""MasterServer"" ""{options.MasterServer}"" Is Not Valid; Use A Host Name Or An IP Address With An Optional Port From 1 To 65535, Without A Scheme Or A Path");
+
         if (string.IsNullOrWhiteSpace(options.Location))
             failures.Add(@"""Location"" Must Be Provided");
 
@@ -90,7 +96,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
         // This Runs Last, Because Building The Arguments Needs Options That Passed Every Other Check
         if (failures.Count is 0)
         {
-            string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway), new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
+            string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", options.MasterServer, new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
 
             // The Console Reads The Payload Without Its Surrounding Quotes
             int commandLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
@@ -100,5 +106,22 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
         }
 
         return failures.Count is 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static bool IsHostWithOptionalPort(string address)
+    {
+        string host = address;
+
+        int separator = address.LastIndexOf(':');
+
+        if (separator >= 0)
+        {
+            host = address[..separator];
+
+            if (int.TryParse(address[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port) is false || port is < 1 or > 65535)
+                return false;
+        }
+
+        return Uri.CheckHostName(host) is UriHostNameType.Dns or UriHostNameType.IPv4;
     }
 }

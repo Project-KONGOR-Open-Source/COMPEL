@@ -1,15 +1,10 @@
 namespace COMPEL.Services.Supervision;
 
 /// <summary>
-///     Resolves the server's own advertised address and the master server endpoint from the configured gateway, reproducing the legacy COMPEL's address logic.
-///     The public master server is the Project KONGOR gateway; a gateway of localhost routes to a local master server, which is how the manager is pointed at a local NEXUS instance.
+///     Resolves the server's own advertised address from the configured gateway, and gives the configured master server endpoint.
 /// </summary>
 public sealed class AddressResolver
 {
-    private const string PublicMasterServerAddress = "api.kongor.net";
-    private const string LocalMasterServerAddress  = "127.0.0.1";
-    private const int    LocalMasterServerPort     = 5555;
-
     private static readonly string[] PublicIPServices =
     [
         "https://ipv4.icanhazip.com",
@@ -28,8 +23,6 @@ public sealed class AddressResolver
         this.manager = manager.Value;
         this.logger = logger;
     }
-
-    private static bool GatewayIsLocal(string gateway) => gateway.ToUpperInvariant() is "LOCALHOST" or "127.0.0.1";
 
     /// <summary>
     ///     Resolves the server's own advertised IPv4 address. The result is cached for the lifetime of the process.
@@ -73,14 +66,9 @@ public sealed class AddressResolver
     }
 
     /// <summary>
-    ///     The master server host and port passed to the manager via the "-masterserver" argument. The public gateway takes no explicit port; the local gateway uses the local NEXUS port.
+    ///     The master server host and port passed to the manager via the "-masterserver" and "-ascensionserver" arguments.
     /// </summary>
-    public string MasterServerHostAndPort => MasterServerHostAndPortFor(manager.Gateway);
-
-    /// <summary>
-    ///     The master server host and port the given gateway leads to.
-    /// </summary>
-    public static string MasterServerHostAndPortFor(string gateway) => GatewayIsLocal(gateway) ? $"{LocalMasterServerAddress}:{LocalMasterServerPort}" : PublicMasterServerAddress;
+    public string MasterServerHostAndPort => manager.MasterServer;
 
     private async Task<string> DetectPublicIPAddress(CancellationToken cancellationToken)
     {

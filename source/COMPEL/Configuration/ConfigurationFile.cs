@@ -11,6 +11,7 @@ public sealed class ConfigurationFile
     public InstancesSetting Instances { get; set; } = new ();
     public WarmInstancesTargetSetting WarmInstancesTarget { get; set; } = new ();
     public GatewaySetting Gateway { get; set; } = new ();
+    public MasterServerSetting MasterServer { get; set; } = new ();
     public LocationSetting Location { get; set; } = new ();
     public ServerNamePrefixSetting ServerNamePrefix { get; set; } = new ();
     public UseProxySetting UseProxy { get; set; } = new ();
@@ -49,7 +50,13 @@ public sealed class WarmInstancesTargetSetting
 public sealed class GatewaySetting
 {
     public string Value { get; set; } = "kongor.net";
-    public string Description => "The entry point for game servers and the server manager. Use 'kongor.net' for the official public gateway, 'localhost' for local development, 'PUBLIC' to auto-detect the public IP address, a LAN or public IP address, or a local or public host name to resolve.";
+    public string Description => "The address players reach the match servers at. Use 'kongor.net' for the official public gateway, 'localhost' for local development, 'PUBLIC' to auto-detect the public IP address, a LAN or public IP address, or a local or public host name to resolve.";
+}
+
+public sealed class MasterServerSetting
+{
+    public string Value { get; set; } = "api.kongor.net";
+    public string Description => "Where COMPEL and its server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path. Use 'api.kongor.net' for the official public master server, or e.g. 'localhost:5555' for local development. A local set-up sets both this and 'Gateway'.";
 }
 
 public sealed class LocationSetting

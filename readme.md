@@ -28,7 +28,8 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 | `UserName` / `Password`            | The Project KONGOR host account credentials.                                                                                                                                 |
 | `Instances`                        | Number of match server instances (1 … logical processor count).                                                                                                              |
 | `WarmInstancesTarget`              | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                   |
-| `Gateway`                          | `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                                                                  |
+| `Gateway`                          | The address players reach the match servers at: `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name. |
+| `MasterServer`                     | Where COMPEL and its manager find NEXUS's master server: a host name or an IP address with an optional port, without a scheme or a path (default `api.kongor.net`). A local set-up sets both `Gateway` and `MasterServer`. |
 | `Location`                         | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`.                                                                                                       |
 | `ServerNamePrefix`                 | The base match server name. The instance index is appended.                                                                                                                  |
 | `UseProxy`                         | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                      |
@@ -45,7 +46,7 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 dotnet run --project source/COMPEL
 ```
 
-The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password` (and `ControlPlaneAuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run COMPEL. Logs are written to the console and to a single `COMPEL.log` beside the executable.
+The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password` (and `ControlPlaneAuthenticationToken` to enable remote management, or `Gateway` and `MasterServer` for a local set-up), then run COMPEL. Logs are written to the console and to a single `COMPEL.log` beside the executable.
 
 COMPEL does not require elevated privileges. It needs write access to its installation directory, because it mirrors the match server distribution into it and rewrites its own files during a self-update, and it refuses to start when that directory is not writable. Each match server binds itself to the processor it is assigned, and neither COMPEL nor the manager assigns a process priority, so no privileged operation is involved. The manager and its match servers write their runtime artefacts in the user folder COMPEL passes the manager with `-config`, which `RuntimeArtefactsPath` sets, on every platform, so COMPEL also refuses to start when it cannot write there.
 

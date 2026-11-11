@@ -92,16 +92,6 @@ if (WriteAccessGuard.FindUnwritableDirectory(installationDirectory, artefactsDir
     return;
 }
 
-// The Master Server Must Be Reachable Before Launching; The Servers Cannot Register Or Authenticate Without It, So An Unreachable Master Server Is A Hard Startup Failure
-// A Localhost Gateway Uses A Loopback Master Server And Is Not Pinged
-if (await MasterServerIsReachable(configuration.Gateway.Value, logger) is false)
-{
-    logger.Log(LogCategory.Initialise, @"The Master Server ""api.kongor.net"" Is Not Reachable; COMPEL Will Not Start");
-    logger.Log(LogCategory.Initialise, "Check The Host's Network Connection, Then Start COMPEL Again");
-
-    return;
-}
-
 // Refuse To Start If Another COMPEL Instance Is Already Running Against This Installation
 string lockFilePath = Path.Combine(AppContext.BaseDirectory, DeploymentManifest.LockFileName);
 
@@ -132,6 +122,7 @@ builder.Services.AddOptions<MatchServerManagerOptions>().Configure(options =>
     options.Instances            = configuration.Instances.Value;
     options.WarmInstancesTarget  = configuration.WarmInstancesTarget.Value;
     options.Gateway              = configuration.Gateway.Value;
+    options.MasterServer         = configuration.MasterServer.Value;
     options.Location             = configuration.Location.Value;
     options.ServerNamePrefix     = configuration.ServerNamePrefix.Value;
     options.UseProxy             = configuration.UseProxy.Value;
@@ -189,6 +180,22 @@ try
     _ = application.Services.GetRequiredService<IOptions<MatchServerManagerOptions>>().Value;
     _ = application.Services.GetRequiredService<IOptions<CDNOptions>>().Value;
 
+    // The Master Server Must Be Reachable Before Launching; The Servers Cannot Register Or Authenticate Without It, So An Unreachable Master Server Is A Hard Startup Failure
+    // This Runs After The Options Validation, Which Guarantees The Setting Forms A Valid Address
+    using HttpClient masterServerClient = new () { Timeout = TimeSpan.FromSeconds(5) };
+
+    if (await MasterServerProbe.IsReachable(masterServerClient, configuration.MasterServer.Value, CancellationToken.None) is false)
+    {
+        singleInstanceGuard.Dispose();
+
+        logger.Log(LogCategory.Initialise, $@"The Master Server At ""{MasterServerProbe.HealthAddress(configuration.MasterServer.Value)}"" Is Not Reachable; COMPEL Will Not Start");
+        logger.Log(LogCategory.Initialise, @"Check ""MasterServer"" And The Host's Network Connection, Then Start COMPEL Again");
+
+        return;
+    }
+
+    logger.Log(LogCategory.Initialise, $@"Master Server ""{configuration.MasterServer.Value}"" Is Reachable");
+
     // Released Explicitly On A Graceful Shutdown; A Crash Or A Forced Kill Still Releases The Underlying File Handle At The Operating-System Level
     application.Lifetime.ApplicationStopping.Register(() => singleInstanceGuard.Dispose());
 
@@ -223,32 +230,4 @@ catch (OptionsValidationException exception)
     logger.Log(LogCategory.Initialise, $@"Fix ""{ConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
 
     return;
-}
-
-// Pings The Master Server (Unless The Gateway Is Loopback, Whose Master Server Is Local And Assumed Reachable), Reporting The Round-Trip Time On Success; A Filtered ICMP Response Is Treated As Unreachable, As In The Legacy Startup Check
-static async Task<bool> MasterServerIsReachable(string gateway, Logger logger)
-{
-    if (gateway.Equals("localhost", StringComparison.OrdinalIgnoreCase) || gateway.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
-        return true;
-
-    const string masterServerHost = "api.kongor.net";
-
-    try
-    {
-        using Ping ping = new ();
-
-        PingReply reply = await ping.SendPingAsync(masterServerHost, TimeSpan.FromSeconds(5));
-
-        if (reply.Status is not IPStatus.Success)
-            return false;
-
-        logger.Log(LogCategory.Initialise, $@"Master Server ""{masterServerHost}"" Is Reachable ({reply.RoundtripTime} ms)");
-
-        return true;
-    }
-
-    catch
-    {
-        return false;
-    }
 }

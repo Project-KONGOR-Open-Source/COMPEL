@@ -122,7 +122,7 @@ public sealed class MatchServerManagerOptionsValidatorTests
         MatchServerManagerOptions options = ValidOptions();
         options.ServerNamePrefix = "A";
 
-        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", AddressResolver.MasterServerHostAndPortFor(options.Gateway), new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", options.MasterServer, new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
         int baseLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
 
         options.ServerNamePrefix = new string('A', payloadLength - baseLength + 1);
@@ -211,5 +211,55 @@ public sealed class MatchServerManagerOptionsValidatorTests
         options.WarmInstancesTarget = 0;
 
         await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    [Arguments("api.kongor.net")]
+    [Arguments("localhost:5555")]
+    [Arguments("192.168.0.10:65535")]
+    public async Task A_Master_Server_Host_With_An_Optional_Port_Is_Accepted(string masterServer)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = masterServer;
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Missing_Master_Server_Is_Refused()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = " ";
+
+        await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    [Arguments("http://localhost:5555")]
+    [Arguments("localhost:5555/health")]
+    public async Task A_Master_Server_With_A_Scheme_Is_Refused(string masterServer)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = masterServer;
+
+        ValidateOptionsResult result = Validate(options);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(result.Failed).IsTrue();
+            await Assert.That(result.FailureMessage).Contains("Without A Scheme Or A Path");
+        }
+    }
+
+    [Test]
+    [Arguments("localhost:0")]
+    [Arguments("localhost:65536")]
+    [Arguments("localhost:abc")]
+    public async Task A_Master_Server_With_A_Port_Out_Of_Range_Is_Refused(string masterServer)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = masterServer;
+
+        await Assert.That(Validate(options).Failed).IsTrue();
     }
 }
