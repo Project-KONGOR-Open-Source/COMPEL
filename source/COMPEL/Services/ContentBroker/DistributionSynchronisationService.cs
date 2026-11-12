@@ -121,7 +121,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
                 // With No Failed Files The Only Reason Left To Retry Is A Distribution That Does Not Contain The Manager Executable, Which The Per-File Lines Cannot Show
                 if (summary.FilesFailed is 0)
-                    logger.LogWarning(@"FAIL: The Manager Executable ""{Executable}"" Is Not Part Of The Synchronised Distribution", ManagerExecutablePath);
+                    logger.LogWarning(@"FAIL: The Match Server Manager's Executable ""{Executable}"" Is Not Part Of The Synchronised Distribution", ManagerExecutablePath);
 
                 logger.LogWarning("Retrying Synchronisation In {Seconds} Seconds", RetryDelay.TotalSeconds);
             }

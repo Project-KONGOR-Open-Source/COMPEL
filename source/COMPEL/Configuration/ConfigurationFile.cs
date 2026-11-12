@@ -38,13 +38,13 @@ public sealed class PasswordSetting
 public sealed class InstancesSetting
 {
     public int Value { get; set; } = 1;
-    public string Description => "The number of server instances to spawn. This must be between one and the number of logical processors. The server manager spreads the instances across the available processors, each of which binds itself to the processor it is assigned.";
+    public string Description => "The number of server instances to spawn. This must be between one and the number of logical processors. The match server manager spreads the instances across the available processors, each of which binds itself to the processor it is assigned.";
 }
 
 public sealed class WarmInstancesTargetSetting
 {
     public int Value { get; set; } = 1;
-    public string Description => "The number of server instances the manager keeps idle (warm and ready to host a match) at any time; the remaining instances are put to sleep to conserve resources and are woken on demand as idle instances are taken up by matches. This must be between zero and the value of 'Instances'. The default of one keeps a single warm spare, which is the manager's own default; raising it makes more instances immediately selectable in the game client, at the cost of the resources the additional warm instances consume.";
+    public string Description => "The number of server instances the match server manager keeps idle (warm and ready to host a match) at any time; the remaining instances are put to sleep to conserve resources and are woken on demand as idle instances are taken up by matches. This must be between zero and the value of 'Instances'. The default of one keeps a single warm spare, which is the match server manager's own default; raising it makes more instances immediately selectable in the game client, at the cost of the resources the additional warm instances consume.";
 }
 
 public sealed class GatewaySetting
@@ -56,7 +56,7 @@ public sealed class GatewaySetting
 public sealed class MasterServerSetting
 {
     public string Value { get; set; } = "api.kongor.net";
-    public string Description => "Where COMPEL and its server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path. Use 'api.kongor.net' for the official public master server, or 'localhost:5555' for local development.";
+    public string Description => "Where COMPEL and its match server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path. Use 'api.kongor.net' for the official public master server, or 'localhost:5555' for local development.";
 }
 
 public sealed class LocationSetting
@@ -80,7 +80,7 @@ public sealed class UseProxySetting
 public sealed class PortRangeOffsetSetting
 {
     public int Value { get; set; }
-    public string Description => "The offset from the start of the valid game/voice port ranges at which the game/voice ports to be used at runtime will start; it also moves the match server manager's own port. The game/voice port ranges without the proxy are 11235-11335/11435-11535, and with the proxy they are 21235-21335/21435-21535.";
+    public string Description => "The offset from the start of the valid game/voice port ranges at which the game/voice ports to be used at runtime will start. It also moves the match server manager's own port. The game/voice port ranges without the proxy are 11235-11335/11435-11535, and with the proxy they are 21235-21335/21435-21535.";
 }
 
 public sealed class RuntimeArtefactsPathSetting
