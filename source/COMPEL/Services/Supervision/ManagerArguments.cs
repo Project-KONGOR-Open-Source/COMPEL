@@ -71,10 +71,10 @@ public static class ManagerArguments
             "-manager",
             "-noconfig",
 
-            // The Stack Of WILLOWMAKER's Game Client With The Manager's Own Folder On Top: The KONGOR Folders, With "KONGOR/extensions" Last, Hold COMPEL's Configuration File And The Shipped Updates, And The Manager Writes To "server-manager", Beside Its Match Servers' "server"
+            // The Match Server Manager Writes To The Last Folder In Its Stack
             "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager",
 
-            // The "-mod" And "-config" Arguments Come Before "-execute", Which Opens The Log In The Folder They Choose; The Folder Is Quoted For The Spaces It May Hold, And Loses A Trailing Separator Because A Backslash Before The Closing Quote Would Escape It
+            // A Trailing Separator Would Escape The Closing Quote
             "-config", '"' + Path.TrimEndingDirectorySeparator(artefactsDirectory) + '"',
             "-execute", '"' + execute + '"',
             "-masterserver", masterServerHostAndPort,
