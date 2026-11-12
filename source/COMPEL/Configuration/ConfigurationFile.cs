@@ -62,7 +62,7 @@ public sealed class MasterServerSetting
 public sealed class LocationSetting
 {
     public string Value { get; set; } = "EU";
-    public string Description => "Normally, the location can be set to any value, but, in order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH'.";
+    public string Description => "Normally, the location can be set to any value, but, in order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH', which makes the match servers available to matches from every region.";
 }
 
 public sealed class ServerNamePrefixSetting
