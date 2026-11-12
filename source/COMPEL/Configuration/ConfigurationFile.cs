@@ -56,7 +56,7 @@ public sealed class GatewaySetting
 public sealed class MasterServerSetting
 {
     public string Value { get; set; } = "api.kongor.net";
-    public string Description => "Where COMPEL and its server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path. Use 'api.kongor.net' for the official public master server, or e.g. 'localhost:5555' for local development. A local set-up sets both this and 'Gateway'.";
+    public string Description => "Where COMPEL and its server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path. Use 'api.kongor.net' for the official public master server, or 'localhost:5555' for local development.";
 }
 
 public sealed class LocationSetting
