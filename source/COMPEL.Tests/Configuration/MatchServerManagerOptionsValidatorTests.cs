@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Configuration;
 
 /// <summary>
-///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the refusal of a NUL character and of a user name outside the account name characters, the supported locations and artefacts-path alias, and the port-range-offset boundary.
+///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the refusal of a null character and of a user name outside the account name characters, the supported locations and artefacts-path alias, and the port-range-offset boundary.
 /// </summary>
 public sealed class MatchServerManagerOptionsValidatorTests
 {
@@ -68,7 +68,7 @@ public sealed class MatchServerManagerOptionsValidatorTests
     [Arguments("UserName")]
     [Arguments("Password")]
     [Arguments("ServerNamePrefix")]
-    public async Task A_NUL_Character_Is_Refused_In_Every_Value(string setting)
+    public async Task A_Null_Character_Is_Refused_In_Every_Value(string setting)
     {
         MatchServerManagerOptions options = ValidOptions();
 

@@ -34,7 +34,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
             failures.Add(@"""Password"" Is Still The Default Placeholder; Set It To The User's Password");
 
         else if (options.Password.Contains((char)0))
-            failures.Add(@"""Password"" Must Not Contain A NUL Character");
+            failures.Add(@"""Password"" Must Not Contain A Null Character");
 
         int processorCount = Environment.ProcessorCount;
 
@@ -69,7 +69,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
             failures.Add(@"""ServerNamePrefix"" Must Be Provided");
 
         else if (options.ServerNamePrefix.Contains((char)0))
-            failures.Add(@"""ServerNamePrefix"" Must Not Contain A NUL Character");
+            failures.Add(@"""ServerNamePrefix"" Must Not Contain A Null Character");
 
         if (options.PortRangeOffset < 0)
             failures.Add(@"""PortRangeOffset"" Must Not Be Negative");
