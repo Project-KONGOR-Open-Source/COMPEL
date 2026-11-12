@@ -23,22 +23,22 @@ It ships as a single self-contained binary plus a self-describing `COMPEL.json`.
 
 All host-facing configuration lives in a single `COMPEL.json` beside the executable, in the self-documenting `{ "Value": …, "Description": … }` format. The release archives ship with a default one already in place; when it is missing (for example when running from source), COMPEL generates it on first run and stops so it can be edited. Every value is validated at startup, and all startup problems are reported together.
 
-| Key                                | Purpose                                                                                                                                                                      |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UserName` / `Password`            | The Project KONGOR host account credentials.                                                                                                                                 |
-| `Instances`                        | Number of match server instances (1 … logical processor count).                                                                                                              |
-| `WarmInstancesTarget`              | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                   |
-| `Gateway`                          | The address players reach the match servers at: `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name. |
-| `MasterServer`                     | Where COMPEL and its match server manager find NEXUS's master server: a host name or an IP address with an optional port, without a scheme or a path (default `api.kongor.net`). |
-| `Location`                         | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`, which makes the match servers available to matches from every region.                                                                                                       |
-| `ServerNamePrefix`                 | The base match server name. The instance index is appended.                                                                                                                  |
-| `UseProxy`                         | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                      |
-| `PortRangeOffset`                  | Offset into the game/voice port windows. It also moves the match server manager's own port. `base + offset + instances` must stay within the 100-port window.                                                                   |
-| `RuntimeArtefactsPath`             | `DEFAULT` (the host account's profile) or a fully qualified path, on every platform.                                                                                      |
-| `CDN`                              | The CDN base address or URL (default `cdn.kongor.net`). Without a scheme, `localhost`, `127.0.0.1`, and `[::1]` use HTTP and every other address uses HTTPS.                 |
-| `CDNSynchronisation`               | Whether to synchronise the distribution from the CDN on startup. Set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works). |
-| `ControlPlaneAuthenticationToken`  | Bearer token gating the management endpoints. Leave as `...` to disable remote management.                                                                                   |
-| `ControlPlanePort`                 | TCP port for the HTTP control plane (default `8080`).                                                                                                                        |
+| Key                               | Purpose                                                                                                                                                                          |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UserName` / `Password`           | The Project KONGOR host account credentials.                                                                                                                                     |
+| `Instances`                       | Number of match server instances (1 … logical processor count).                                                                                                                  |
+| `WarmInstancesTarget`             | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                       |
+| `Gateway`                         | The address players reach the match servers at: `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                      |
+| `MasterServer`                    | Where COMPEL and its match server manager find NEXUS's master server: a host name or an IP address with an optional port, without a scheme or a path (default `api.kongor.net`). |
+| `Location`                        | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`, which makes the match servers available to matches from every region.                                     |
+| `ServerNamePrefix`                | The base match server name. The instance index is appended.                                                                                                                      |
+| `UseProxy`                        | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                          |
+| `PortRangeOffset`                 | Offset into the game/voice port windows. It also moves the match server manager's own port. `base + offset + instances` must stay within the 100-port window.                    |
+| `RuntimeArtefactsPath`            | `DEFAULT` (the host account's profile) or a fully qualified path, on every platform.                                                                                             |
+| `CDN`                             | The CDN base address or URL (default `cdn.kongor.net`). Without a scheme, `localhost`, `127.0.0.1`, and `[::1]` use HTTP and every other address uses HTTPS.                     |
+| `CDNSynchronisation`              | Whether to synchronise the distribution from the CDN on startup. Set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works).     |
+| `ControlPlaneAuthenticationToken` | Bearer token gating the management endpoints. Leave as `...` to disable remote management.                                                                                       |
+| `ControlPlanePort`                | TCP port for the HTTP control plane (default `8080`).                                                                                                                            |
 
 ## Running
 
