@@ -26,13 +26,13 @@ public sealed class ConfigurationFile
 public sealed class UserNameSetting
 {
     public string Value { get; set; } = "USERNAME";
-    public string Description => "The name of the user which will host the game servers. This needs to match the name of a registered Project KONGOR user, so it can only contain letters, numbers, underscores, and hyphens.";
+    public string Description => "The name of the user which will host the match servers. This needs to match the name of a registered Project KONGOR user, so it can only contain letters, numbers, underscores, and hyphens.";
 }
 
 public sealed class PasswordSetting
 {
     public string Value { get; set; } = "PASSWORD";
-    public string Description => "The password of the user which will host the game servers. This needs to match the password of the registered Project KONGOR user set to host the game servers.";
+    public string Description => "The password of the user which will host the match servers. This needs to match the password of the registered Project KONGOR user set to host the match servers.";
 }
 
 public sealed class InstancesSetting
@@ -62,19 +62,19 @@ public sealed class MasterServerSetting
 public sealed class LocationSetting
 {
     public string Value { get; set; } = "EU";
-    public string Description => "Normally, the location can be set to any value, but, in order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH', which makes the match servers available to matches from every region.";
+    public string Description => "In order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH', which makes the match servers available to matches from every region.";
 }
 
 public sealed class ServerNamePrefixSetting
 {
     public string Value { get; set; } = "KONGOR ARENA";
-    public string Description => "The base name of the game server instances. The name of each server instance will be the concatenation of this base name and the 1-based index of the instance.";
+    public string Description => "The base name of the match server instances. The name of each server instance will be the concatenation of this base name and the 1-based index of the instance.";
 }
 
 public sealed class UseProxySetting
 {
     public bool Value { get; set; } = true;
-    public string Description => "Whether to run COMPEL's built-in proxy in front of the game servers. When enabled, clients connect to public ports offset 10000 above the local server ports (e.g. 21235 instead of 11235); the proxy forwards them to the servers and authenticates each client with the challenge protocol required on that port range. Set to 'false' to make the local server ports public directly, without the proxy.";
+    public string Description => "Whether to run COMPEL's built-in proxy in front of the match servers. When enabled, clients connect to public ports offset 10000 above the local server ports (21235 instead of 11235, for example); the proxy forwards them to the servers and authenticates each client with the challenge protocol required on that port range. Set to 'false' to make the local server ports public directly, without the proxy.";
 }
 
 public sealed class PortRangeOffsetSetting
@@ -86,7 +86,7 @@ public sealed class PortRangeOffsetSetting
 public sealed class RuntimeArtefactsPathSetting
 {
     public string Value { get; set; } = "DEFAULT";
-    public string Description => "The base directory beneath which the match server writes its runtime artefacts (e.g. replays, logs). This value is either the 'DEFAULT' alias, which places artefacts in the host account's profile (its 'HON' directory on Windows and its '.HON' directory on Linux, where everything else is written), or a fully qualified path in which the same directory is used instead. This setting applies on every platform.";
+    public string Description => "The base directory beneath which the match server writes its runtime artefacts (its replays and logs). This value is either the 'DEFAULT' alias, which places artefacts in the host account's profile (its 'HON' directory on Windows and its '.HON' directory on Linux, where everything else is written), or a fully qualified path in which the same directory is used instead. This setting applies on every platform.";
 }
 
 public sealed class CDNSetting

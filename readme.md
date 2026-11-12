@@ -12,7 +12,7 @@
 
 COMPEL is a cross-platform, Native-AOT ASP.NET Core application that launches and supervises Heroes Of Newerth match servers on a host machine. Some of its functions are the following:
 
-- synchronises the match server distribution from the CDN (incremental, hash-verified, atomic) into its own directory, then launches and supervises the Heroes Of Newerth manager process, restarting it if it exits unexpectedly
+- synchronises the match server distribution from the CDN (incremental, hash-verified, atomic) into its own directory, then launches and supervises the Heroes Of Newerth match server manager process, restarting it if it exits unexpectedly
 - runs a managed, cross-platform UDP proxy when enabled, forwarding the public game and voice ports to the local server ports and authenticating clients with the challenge protocol they require on that port range
 - answers the master server's UDP latency pings
 - exposes an HTTP control plane so it can be pinged for latency, queried by the master server, and managed remotely by the host operator
@@ -46,7 +46,7 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 dotnet run --project source/COMPEL
 ```
 
-The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password`, `ControlPlaneAuthenticationToken` to enable remote management, and, for a local setup, `Gateway` and `MasterServer` to the local host's addresses. Then run COMPEL, which waits for the master server that `MasterServer` names: while it does not answer, COMPEL logs that it is not reachable yet and tries again at growing intervals, up to a limit, for as long as it takes, and Ctrl+C, or the stop signal a container sends, ends the wait. Logs are written to the console and to a single `COMPEL.log` beside the executable.
+The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password`; set `ControlPlaneAuthenticationToken` to enable remote management, and, for a local setup, set `Gateway` and `MasterServer` to the local host's addresses. Then run COMPEL, which waits for the master server that `MasterServer` names: while it does not answer, COMPEL logs that it is not reachable yet and tries again at growing intervals, up to a limit, for as long as it takes, and Ctrl+C, or the stop signal a container sends, ends the wait. Logs are written to the console and to a single `COMPEL.log` beside the executable.
 
 COMPEL does not require elevated privileges. It needs write access to its installation directory, because it mirrors the match server distribution into it and rewrites its own files during a self-update, and it refuses to start when that directory is not writable. Each match server binds itself to the processor it is assigned, and neither COMPEL nor the match server manager assigns a process priority, so no privileged operation is involved. The match server manager and its match servers write their runtime artefacts in the user directory COMPEL passes the match server manager with `-config`, which `RuntimeArtefactsPath` sets, on every platform, so COMPEL also refuses to start when it cannot write there.
 
@@ -56,7 +56,7 @@ COMPEL does not require elevated privileges. It needs write access to its instal
 | ------ | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------ |
 | `GET`  | `/ping`                                                     | none           | Latency probe.                                                                       |
 | `GET`  | `/health`, `/alive`                                         | none           | Readiness and liveness.                                                              |
-| `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, manager/proxy state, uptime. |
+| `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, match server manager/proxy state, uptime. |
 | `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                    |
 | `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                      |
 | `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                    |
@@ -79,7 +79,7 @@ Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-releases.yml`, which
 dotnet test --solution source/COMPEL.slnx
 ```
 
-The `COMPEL.Tests` project (TUnit) covers the port arithmetic, manager arguments, configuration validation and loading, the ping and proxy-challenge wire formats, and the proxy relay over loopback. The `global.json` at the repository root selects the Microsoft Testing Platform runner that TUnit requires. `.github/workflows/run-unit-tests.yml` runs the suite on Windows and Linux for every pull request to `main`.
+The `COMPEL.Tests` project (TUnit) covers the port arithmetic, match server manager arguments, configuration validation and loading, the ping and proxy-challenge wire formats, and the proxy relay over loopback. The `global.json` at the repository root selects the Microsoft Testing Platform runner that TUnit requires. `.github/workflows/run-unit-tests.yml` runs the suite on Windows and Linux for every pull request to `main`.
 
 ## Solution Layout
 
