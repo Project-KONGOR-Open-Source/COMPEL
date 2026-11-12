@@ -6,7 +6,7 @@ namespace COMPEL.Services.Supervision;
 public static class ManagerArguments
 {
     /// <summary>
-    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager", "-config", "\"folder\"", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port".
+    ///     Builds the argument vector for launching the manager: "-manager", "-noconfig", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager", "-config", "\"directory\"", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port".
     ///     Every value in the "-execute" payload is escaped with <see cref="ConsoleEscaping.Escape"/>, so any character a value holds reaches the manager as written.
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
@@ -71,7 +71,7 @@ public static class ManagerArguments
             "-manager",
             "-noconfig",
 
-            // The Match Server Manager Writes To The Last Folder In Its Stack
+            // The Match Server Manager Writes To The Last Directory In Its Stack
             "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager",
 
             // A Trailing Separator Would Escape The Closing Quote

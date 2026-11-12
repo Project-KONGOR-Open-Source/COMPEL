@@ -157,7 +157,7 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
-    public async Task The_User_Folder_Is_Passed_With_Config()
+    public async Task The_User_Directory_Is_Passed_With_Config()
     {
         string[] arguments = Build();
 
@@ -179,8 +179,8 @@ public sealed class ManagerArgumentsTests
         MatchServerManagerOptions options = SampleOptions();
         options.RuntimeArtefactsPath = runtime;
 
-        string folder = new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory;
-        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", folder);
+        string directory = new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory;
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", directory);
 
         await Assert.That(arguments[Array.IndexOf(arguments, "-config") + 1]).IsEqualTo('"' + expected + '"');
     }
@@ -196,7 +196,7 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
-    public async Task The_Folder_Arguments_Come_Before_Execute()
+    public async Task The_Directory_Arguments_Come_Before_Execute()
     {
         string[] arguments = Build();
 

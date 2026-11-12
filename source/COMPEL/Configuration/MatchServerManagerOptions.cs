@@ -57,8 +57,8 @@ public sealed class MatchServerManagerOptions
     public int PortRangeOffset { get; set; }
 
     /// <summary>
-    ///     The base directory beneath which the match server manager and servers write their runtime artefacts (replays and logs). This value is either the alias "DEFAULT" or a fully qualified path in which the same folder is used instead.
-    ///     "DEFAULT" places the artefacts in the host account's profile (its "HON" folder on Windows and its ".HON" folder on Linux), which is where Heroes Of Newerth writes everything else.
+    ///     The base directory beneath which the match server manager and servers write their runtime artefacts (replays and logs). This value is either the alias "DEFAULT" or a fully qualified path in which the same directory is used instead.
+    ///     "DEFAULT" places the artefacts in the host account's profile (its "HON" directory on Windows and its ".HON" directory on Linux), which is where Heroes Of Newerth writes everything else.
     ///     This applies on every platform.
     /// </summary>
     public string RuntimeArtefactsPath { get; set; } = "DEFAULT";

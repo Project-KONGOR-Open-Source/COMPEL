@@ -86,7 +86,7 @@ public sealed class PortRangeOffsetSetting
 public sealed class RuntimeArtefactsPathSetting
 {
     public string Value { get; set; } = "DEFAULT";
-    public string Description => "The base directory beneath which the match server writes its runtime artefacts (e.g. replays, logs). This value is either the 'DEFAULT' alias, which places artefacts in the host account's profile (its 'HON' folder on Windows and its '.HON' folder on Linux, where everything else is written), or a fully qualified path in which the same folder is used instead. This setting applies on every platform.";
+    public string Description => "The base directory beneath which the match server writes its runtime artefacts (e.g. replays, logs). This value is either the 'DEFAULT' alias, which places artefacts in the host account's profile (its 'HON' directory on Windows and its '.HON' directory on Linux, where everything else is written), or a fully qualified path in which the same directory is used instead. This setting applies on every platform.";
 }
 
 public sealed class CDNSetting

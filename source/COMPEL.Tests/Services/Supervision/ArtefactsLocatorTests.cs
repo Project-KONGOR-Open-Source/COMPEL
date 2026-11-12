@@ -42,7 +42,7 @@ public sealed class ArtefactsLocatorTests
     {
         ArtefactsLocator locator = Locator("DEFAULT");
 
-        // The Root Also Holds The Game Client's And The Editors' Folders On A Machine That Plays As Well As Hosts, So Only The Match Servers' Replays Are Swept
+        // The Root Also Holds The Game Client's And The Editors' Directories On A Machine That Plays As Well As Hosts, So Only The Match Servers' Replays Are Swept
         await Assert.That(locator.ReplaysDirectory).IsEqualTo(Path.Combine(locator.ArtefactsDirectory, "server", "replays"));
     }
 }
