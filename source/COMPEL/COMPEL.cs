@@ -180,16 +180,43 @@ try
     _ = application.Services.GetRequiredService<IOptions<MatchServerManagerOptions>>().Value;
     _ = application.Services.GetRequiredService<IOptions<CDNOptions>>().Value;
 
-    // The Master Server Must Be Reachable Before Launching; The Servers Cannot Register Or Authenticate Without It, So An Unreachable Master Server Is A Hard Startup Failure
+    // COMPEL Waits For The Master Server Before Launching, Since Its Match Servers Cannot Register Or Authenticate Without It
     // This Runs After The Options Validation, Which Guarantees The Setting Forms A Valid Address
     using HttpClient masterServerClient = new () { Timeout = TimeSpan.FromSeconds(5) };
 
-    if (await MasterServerProbe.IsReachable(masterServerClient, configuration.MasterServer.Value, CancellationToken.None) is false)
+    bool masterServerReachable;
+
+    // The Stop Signals Cancel The Wait Here; The Registrations End With It, So The Host's Own Handling Applies Once It Runs
+    using (CancellationTokenSource waitCancellation = new ())
+    {
+        void CancelWait(PosixSignalContext context)
+        {
+            context.Cancel = true;
+            waitCancellation.Cancel();
+        }
+
+        using PosixSignalRegistration interrupt = PosixSignalRegistration.Create(PosixSignal.SIGINT, CancelWait);
+        using PosixSignalRegistration quit = PosixSignalRegistration.Create(PosixSignal.SIGQUIT, CancelWait);
+        using PosixSignalRegistration terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, CancelWait);
+
+        bool firstWait = true;
+
+        masterServerReachable = await MasterServerProbe.WaitUntilReachable(masterServerClient, configuration.MasterServer.Value, Task.Delay, (_, delay) =>
+        {
+            logger.Log(LogCategory.Initialise, $@"The Master Server At ""{MasterServerProbe.HealthAddress(configuration.MasterServer.Value)}"" Is Not Reachable Yet; Trying Again In {delay.TotalSeconds} Second(s)");
+
+            if (firstWait)
+                logger.Log(LogCategory.Initialise, @"COMPEL Waits Until It Answers; Check ""MasterServer"" If It Should Already Be Running");
+
+            firstWait = false;
+        }, waitCancellation.Token);
+    }
+
+    if (masterServerReachable is false)
     {
         singleInstanceGuard.Dispose();
 
-        logger.Log(LogCategory.Initialise, $@"The Master Server At ""{MasterServerProbe.HealthAddress(configuration.MasterServer.Value)}"" Is Not Reachable; COMPEL Will Not Start");
-        logger.Log(LogCategory.Initialise, @"Check ""MasterServer"" And The Host's Network Connection, Then Start COMPEL Again");
+        logger.Log(LogCategory.Initialise, "COMPEL Stopped While Waiting For The Master Server");
 
         return;
     }
