@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Configuration;
 
 /// <summary>
-///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the rejection of whitespace in credentials, the supported locations and artefacts-path alias, and the port-range-offset boundary.
+///     Verifies the start-up validation of the host-facing options: the placeholder-credential guard, the refusal of a null character and of a user name outside the account name characters, the supported locations and artefacts-path alias, and the port-range-offset boundary.
 /// </summary>
 public sealed class MatchServerManagerOptionsValidatorTests
 {
@@ -47,21 +47,99 @@ public sealed class MatchServerManagerOptionsValidatorTests
     }
 
     [Test]
-    public async Task A_User_Name_Containing_Whitespace_Is_Rejected()
+    public async Task A_Password_With_Spaces_Quotes_And_Semicolons_Is_Accepted()
     {
         MatchServerManagerOptions options = ValidOptions();
-        options.UserName = "KON GOR";
+        options.Password = @"open ""sesame""; \ $";
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Server_Name_With_Any_Character_Is_Accepted()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.ServerNamePrefix = @"Ünïcødé 名前 ""Arena""; \ $";
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    [Arguments("UserName")]
+    [Arguments("Password")]
+    [Arguments("ServerNamePrefix")]
+    public async Task A_Null_Character_Is_Refused_In_Every_Value(string setting)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+
+        switch (setting)
+        {
+            case "UserName":         options.UserName = "KON\0GOR"; break;
+            case "Password":         options.Password = "sec\0ret"; break;
+            default:                 options.ServerNamePrefix = "KONGOR\0ARENA"; break;
+        }
 
         await Assert.That(Validate(options).Failed).IsTrue();
     }
 
     [Test]
-    public async Task A_Password_Containing_Whitespace_Is_Rejected()
+    [Arguments("Name With Space")]
+    [Arguments("name.dot")]
+    public async Task A_User_Name_Outside_NEXUS_Account_Name_Characters_Is_Refused(string userName)
     {
         MatchServerManagerOptions options = ValidOptions();
-        options.Password = "open sesame";
+        options.UserName = userName;
 
         await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    public async Task A_User_Name_With_Letters_Digits_Underscores_And_Hyphens_Is_Accepted()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.UserName = "Host_01-A";
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Configuration_Too_Long_For_The_Console_Is_Refused()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.ServerNamePrefix = new string('A', 2000);
+
+        ValidateOptionsResult result = Validate(options);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(result.Failed).IsTrue();
+            await Assert.That(result.FailureMessage?.Contains(ConsoleEscaping.CommandLimit.ToString()) is true).IsTrue();
+        }
+    }
+
+    private static MatchServerManagerOptions OptionsWithPayloadLength(int payloadLength)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.ServerNamePrefix = "A";
+
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "255.255.255.255", options.MasterServer, new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory);
+        int baseLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
+
+        options.ServerNamePrefix = new string('A', payloadLength - baseLength + 1);
+
+        return options;
+    }
+
+    [Test]
+    public async Task A_Payload_One_Character_Below_The_Console_Limit_Is_Accepted()
+    {
+        await Assert.That(Validate(OptionsWithPayloadLength(ConsoleEscaping.CommandLimit - 1)).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Payload_Exactly_At_The_Console_Limit_Is_Refused()
+    {
+        await Assert.That(Validate(OptionsWithPayloadLength(ConsoleEscaping.CommandLimit)).Failed).IsTrue();
     }
 
     [Test]
@@ -133,5 +211,55 @@ public sealed class MatchServerManagerOptionsValidatorTests
         options.WarmInstancesTarget = 0;
 
         await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    [Arguments("api.kongor.net")]
+    [Arguments("localhost:5555")]
+    [Arguments("192.168.0.10:65535")]
+    public async Task A_Master_Server_Host_With_An_Optional_Port_Is_Accepted(string masterServer)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = masterServer;
+
+        await Assert.That(Validate(options).Succeeded).IsTrue();
+    }
+
+    [Test]
+    public async Task A_Missing_Master_Server_Is_Refused()
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = " ";
+
+        await Assert.That(Validate(options).Failed).IsTrue();
+    }
+
+    [Test]
+    [Arguments("http://localhost:5555")]
+    [Arguments("localhost:5555/health")]
+    public async Task A_Master_Server_With_A_Scheme_Is_Refused(string masterServer)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = masterServer;
+
+        ValidateOptionsResult result = Validate(options);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(result.Failed).IsTrue();
+            await Assert.That(result.FailureMessage).Contains("Without A Scheme Or A Path");
+        }
+    }
+
+    [Test]
+    [Arguments("localhost:0")]
+    [Arguments("localhost:65536")]
+    [Arguments("localhost:abc")]
+    public async Task A_Master_Server_With_A_Port_Out_Of_Range_Is_Refused(string masterServer)
+    {
+        MatchServerManagerOptions options = ValidOptions();
+        options.MasterServer = masterServer;
+
+        await Assert.That(Validate(options).Failed).IsTrue();
     }
 }

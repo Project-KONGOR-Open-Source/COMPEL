@@ -29,7 +29,7 @@ public sealed record Manifest
     public required IReadOnlyList<string> ExcludeFromSource { get; init; }
 
     /// <summary>
-    ///     Local-side glob patterns for files that must not be changed in the target directory, such as the manager's own files.
+    ///     Local-side glob patterns for files that must not be changed in the target directory, such as the match server manager's own files.
     ///     Matched files are neither overwritten by the download pass nor removed by the deletion pass.
     ///     Patterns are matched against the forward-slash relative path using gitignore-style semantics: <c>*</c> matches within a single path component, <c>**</c> matches across path separators (so <c>**/foo</c> matches <c>foo</c> at any depth including the root), <c>?</c> matches one character within a component, and every other character is literal.
     /// </summary>

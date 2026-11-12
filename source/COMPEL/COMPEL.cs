@@ -9,7 +9,7 @@ if (ConfigurationLoader.Exists() is false)
     return;
 }
 
-// Every Message From Here On Goes Through The Logger So The Console And "COMPEL.log" Carry The Same Session, Opened By A Session Header As In WILLOWMAKER
+// Every Message From Here On Goes Through The Logger So The Console And "COMPEL.log" Carry The Same Session, Opened By A Session Header
 string logFilePath = Path.Combine(AppContext.BaseDirectory, DeploymentManifest.LogFileName);
 
 Logger logger;
@@ -59,17 +59,6 @@ if (locationSafety.Verdict is LocationSafetyVerdict.Unsafe)
     return;
 }
 
-// The Manager Spawns Each Server Instance With An Unquoted Executable Path, Which Heroes Of Newerth Only Parses Correctly When That Path Contains A Whitespace Character
-// Refused Up Front Because The Symptom Is Otherwise Silent And Very Hard To Read: The Manager Starts And Registers Normally, But Every Instance Comes Up As A Game Client And Never Binds Its Game Port, So The Host Advertises Servers That No Client Can Join
-if (HeroesOfNewerthExecutable.CanLaunchInstancesFrom(installationDirectory) is false)
-{
-    logger.Log(LogCategory.Guard, $@"COMPEL Will Not Start From ""{installationDirectory}"" Because The Path Contains No Whitespace Character");
-    logger.Log(LogCategory.Guard, "Heroes Of Newerth Requires A Whitespace Character Somewhere In The Path It Is Launched From, Otherwise The Match Server Instances Never Start Correctly");
-    logger.Log(LogCategory.Guard, @"Move COMPEL To A Directory Whose Path Contains A Whitespace Character (For Example ""C:\HoN Match Server""), Then Start It Again");
-
-    return;
-}
-
 // The Control Plane Port Is Validated Here, Ahead Of Kestrel, So An Out-Of-Range Value Produces A Clear Message Rather Than An Unhandled Bind Failure Or A Silent Bind To An Arbitrary Ephemeral Port
 if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 {
@@ -80,7 +69,7 @@ if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 }
 
 // COMPEL Mirrors The Distribution Into Its Installation Directory And Rewrites Its Own Files During A Self-Update, So Write Access Is A Requirement
-// The Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Artefacts Directory, And Report A Failure To Do So Only In Logs They Cannot Write Either, So Write Access Is A Requirement There Too
+// The Match Server Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Artefacts Directory, And Report A Failure To Do So Only In Logs They Cannot Write Either, So Write Access Is A Requirement There Too
 // Checked Up-Front Because The Alternative Is A Permission Failure Surfacing Part-Way Through A Multi-Gigabyte Synchronisation Or During An Update That Has Already Replaced Some Files
 string artefactsDirectory = new ArtefactsLocator(Options.Create(new MatchServerManagerOptions { RuntimeArtefactsPath = configuration.RuntimeArtefactsPath.Value })).ArtefactsDirectory;
 
@@ -99,16 +88,6 @@ if (WriteAccessGuard.FindUnwritableDirectory(installationDirectory, artefactsDir
         logger.Log(LogCategory.Guard, "The Match Server Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath That Directory");
         logger.Log(LogCategory.Guard, @"Grant The Account Running COMPEL Write Access To That Directory, Or Set ""RuntimeArtefactsPath"" To A Directory It Can Write To, Then Start It Again");
     }
-
-    return;
-}
-
-// The Master Server Must Be Reachable Before Launching; The Servers Cannot Register Or Authenticate Without It, So An Unreachable Master Server Is A Hard Startup Failure
-// A Localhost Gateway Uses A Loopback Master Server And Is Not Pinged
-if (await MasterServerIsReachable(configuration.Gateway.Value, logger) is false)
-{
-    logger.Log(LogCategory.Initialise, @"The Master Server ""api.kongor.net"" Is Not Reachable; COMPEL Will Not Start");
-    logger.Log(LogCategory.Initialise, "Check The Host's Network Connection, Then Start COMPEL Again");
 
     return;
 }
@@ -143,6 +122,7 @@ builder.Services.AddOptions<MatchServerManagerOptions>().Configure(options =>
     options.Instances            = configuration.Instances.Value;
     options.WarmInstancesTarget  = configuration.WarmInstancesTarget.Value;
     options.Gateway              = configuration.Gateway.Value;
+    options.MasterServer         = configuration.MasterServer.Value;
     options.Location             = configuration.Location.Value;
     options.ServerNamePrefix     = configuration.ServerNamePrefix.Value;
     options.UseProxy             = configuration.UseProxy.Value;
@@ -161,7 +141,7 @@ builder.Services.AddOptions<CDNOptions>().Configure(options =>
 // JSON: Source-Generated Serialisation Metadata For The Minimal-API Responses (Required Under Native AOT)
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Insert(0, ControlPlaneJSONContext.Default));
 
-// Logging: The Hosted Services Log Through The Same Logger As The Start-Up Messages, So The Console And The Log File Read As One Stream In WILLOWMAKER's Format
+// Logging: The Hosted Services Log Through The Same Logger As The Start-Up Messages, So The Console And The Log File Read As One Stream
 // Level Filtering Stays With The Host; Framework Chatter Is Limited To Warnings Except For The Lifetime Messages That Mark The Host Starting And Stopping
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new LoggerProvider(logger));
@@ -200,6 +180,45 @@ try
     _ = application.Services.GetRequiredService<IOptions<MatchServerManagerOptions>>().Value;
     _ = application.Services.GetRequiredService<IOptions<CDNOptions>>().Value;
 
+    // COMPEL Waits For The Master Server Before Launching, Since Its Match Servers Cannot Register Or Authenticate Without It
+    // This Runs After The Options Validation, Which Guarantees The Setting Forms A Valid Address
+    using HttpClient masterServerClient = new () { Timeout = TimeSpan.FromSeconds(5) };
+
+    bool masterServerReachable;
+
+    // The Stop Signals Cancel The Wait Here; The Registrations End With It, So The Host's Own Handling Applies Once It Runs; A Stop Signal That Lands After The Last Request Succeeded Still Counts, So It Is Checked Before COMPEL Starts
+    using (CancellationTokenSource waitCancellation = new ())
+    {
+        void CancelWait(PosixSignalContext context)
+        {
+            context.Cancel = true;
+            waitCancellation.Cancel();
+        }
+
+        using PosixSignalRegistration interrupt = PosixSignalRegistration.Create(PosixSignal.SIGINT, CancelWait);
+        using PosixSignalRegistration quit = PosixSignalRegistration.Create(PosixSignal.SIGQUIT, CancelWait);
+        using PosixSignalRegistration terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, CancelWait);
+
+        masterServerReachable = await MasterServerProbe.WaitUntilReachable(masterServerClient, configuration.MasterServer.Value, Task.Delay, (attempt, delay) =>
+        {
+            logger.Log(LogCategory.Initialise, $@"The Master Server At ""{MasterServerProbe.HealthAddress(configuration.MasterServer.Value)}"" Is Not Reachable Yet; Trying Again In {delay.TotalSeconds} Second(s)");
+
+            if (attempt is 0)
+                logger.Log(LogCategory.Initialise, @"COMPEL Waits Until It Answers; Check ""MasterServer"" If It Should Already Be Running");
+        }, waitCancellation.Token) && waitCancellation.IsCancellationRequested is false;
+    }
+
+    if (masterServerReachable is false)
+    {
+        singleInstanceGuard.Dispose();
+
+        logger.Log(LogCategory.Initialise, "COMPEL Stopped While Waiting For The Master Server");
+
+        return;
+    }
+
+    logger.Log(LogCategory.Initialise, $@"Master Server ""{configuration.MasterServer.Value}"" Is Reachable");
+
     // Released Explicitly On A Graceful Shutdown; A Crash Or A Forced Kill Still Releases The Underlying File Handle At The Operating-System Level
     application.Lifetime.ApplicationStopping.Register(() => singleInstanceGuard.Dispose());
 
@@ -234,32 +253,4 @@ catch (OptionsValidationException exception)
     logger.Log(LogCategory.Initialise, $@"Fix ""{ConfigurationLoader.ResolvePath()}"" And Start COMPEL Again");
 
     return;
-}
-
-// Pings The Master Server (Unless The Gateway Is Loopback, Whose Master Server Is Local And Assumed Reachable), Reporting The Round-Trip Time On Success; A Filtered ICMP Response Is Treated As Unreachable, As In The Legacy Startup Check
-static async Task<bool> MasterServerIsReachable(string gateway, Logger logger)
-{
-    if (gateway.Equals("localhost", StringComparison.OrdinalIgnoreCase) || gateway.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
-        return true;
-
-    const string masterServerHost = "api.kongor.net";
-
-    try
-    {
-        using Ping ping = new ();
-
-        PingReply reply = await ping.SendPingAsync(masterServerHost, TimeSpan.FromSeconds(5));
-
-        if (reply.Status is not IPStatus.Success)
-            return false;
-
-        logger.Log(LogCategory.Initialise, $@"Master Server ""{masterServerHost}"" Is Reachable ({reply.RoundtripTime} ms)");
-
-        return true;
-    }
-
-    catch
-    {
-        return false;
-    }
 }

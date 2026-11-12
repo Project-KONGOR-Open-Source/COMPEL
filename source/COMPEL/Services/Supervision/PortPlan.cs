@@ -31,6 +31,11 @@ public sealed class PortPlan
     /// </summary>
     public const int PortRangeWindow = 100;
 
+    /// <summary>
+    ///     The port on which the match server manager listens for its match servers when the offset is zero.
+    /// </summary>
+    public const int BaseManagerPort = 1135;
+
     public int Instances { get; }
 
     public int Offset { get; }
@@ -48,8 +53,13 @@ public sealed class PortPlan
     {
     }
 
+    /// <summary>
+    ///     The port on which the match server manager listens. It sits below every game, voice, and ping port, and moves with the offset so two installations never share it.
+    /// </summary>
+    public int ManagerPort => BaseManagerPort + Offset;
+
     // Local Ports: The Ports The Game Servers Actually Bind
-    // The Manager Always Allocates These In The 112xx / 114xx Range, Regardless Of Whether The Proxy Is Enabled
+    // The Match Server Manager Always Allocates These In The 112xx / 114xx Range, Regardless Of Whether The Proxy Is Enabled
 
     public int LocalGameStart => BaseGamePort + Offset;
 

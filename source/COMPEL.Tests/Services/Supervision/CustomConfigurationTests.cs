@@ -1,7 +1,7 @@
 ﻿namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
-///     Verifies the configuration file that COMPEL writes for the manager and its match servers before every launch.
+///     Verifies the configuration file that COMPEL writes for the match server manager and its match servers before every launch.
 /// </summary>
 public sealed class CustomConfigurationTests
 {

@@ -1,7 +1,7 @@
 namespace COMPEL.Utilities;
 
 /// <summary>
-///     Writes timestamped, categorised entries to the console and to the log file on disc, in the format WILLOWMAKER uses.
+///     Writes timestamped, categorised entries to the console and to the log file on disc.
 ///     Constructing the logger appends a session header, preceded by a blank line when the file already has content, so successive sessions read as distinct blocks.
 /// </summary>
 public sealed class Logger

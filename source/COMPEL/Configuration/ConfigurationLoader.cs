@@ -72,6 +72,7 @@ public static class ConfigurationLoader
         file.Instances                       ??= new ();
         file.WarmInstancesTarget             ??= new ();
         file.Gateway                         ??= new ();
+        file.MasterServer                    ??= new ();
         file.Location                        ??= new ();
         file.ServerNamePrefix                ??= new ();
         file.UseProxy                        ??= new ();

@@ -12,7 +12,7 @@
 
 COMPEL is a cross-platform, Native-AOT ASP.NET Core application that launches and supervises Heroes Of Newerth match servers on a host machine. Some of its functions are the following:
 
-- synchronises the match server distribution from the CDN (incremental, hash-verified, atomic) into its own directory, then launches and supervises the Heroes Of Newerth manager process, restarting it if it exits unexpectedly
+- synchronises the match server distribution from the CDN (incremental, hash-verified, atomic) into its own directory, then launches and supervises the Heroes Of Newerth match server manager process, restarting it if it exits unexpectedly
 - runs a managed, cross-platform UDP proxy when enabled, forwarding the public game and voice ports to the local server ports and authenticating clients with the challenge protocol they require on that port range
 - answers the master server's UDP latency pings
 - exposes an HTTP control plane so it can be pinged for latency, queried by the master server, and managed remotely by the host operator
@@ -23,21 +23,22 @@ It ships as a single self-contained binary plus a self-describing `COMPEL.json`.
 
 All host-facing configuration lives in a single `COMPEL.json` beside the executable, in the self-documenting `{ "Value": …, "Description": … }` format. The release archives ship with a default one already in place; when it is missing (for example when running from source), COMPEL generates it on first run and stops so it can be edited. Every value is validated at startup, and all startup problems are reported together.
 
-| Key                                | Purpose                                                                                                                                                                      |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UserName` / `Password`            | The Project KONGOR host account credentials.                                                                                                                                 |
-| `Instances`                        | Number of match server instances (1 … logical processor count).                                                                                                              |
-| `WarmInstancesTarget`              | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                   |
-| `Gateway`                          | `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                                                                  |
-| `Location`                         | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`.                                                                                                       |
-| `ServerNamePrefix`                 | The base match server name. The instance index is appended.                                                                                                                  |
-| `UseProxy`                         | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                      |
-| `PortRangeOffset`                  | Offset into the game/voice port windows. `base + offset + instances` must stay within the 100-port window.                                                                   |
-| `RuntimeArtefactsPath`             | `DEFAULT` (the host account's profile) or a fully qualified path, on every platform.                                                                                      |
-| `CDN`                              | The CDN base address or URL (default `cdn.kongor.net`). Without a scheme, `localhost`, `127.0.0.1`, and `[::1]` use HTTP and every other address uses HTTPS.                 |
-| `CDNSynchronisation`               | Whether to synchronise the distribution from the CDN on startup. Set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works). |
-| `ControlPlaneAuthenticationToken`  | Bearer token gating the management endpoints. Leave as `...` to disable remote management.                                                                                   |
-| `ControlPlanePort`                 | TCP port for the HTTP control plane (default `8080`).                                                                                                                        |
+| Key                               | Purpose                                                                                                                                                                          |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UserName` / `Password`           | The Project KONGOR host account credentials.                                                                                                                                     |
+| `Instances`                       | Number of match server instances (1 … logical processor count).                                                                                                                  |
+| `WarmInstancesTarget`             | Number of instances kept warm and idle (0 to `Instances`); the rest sleep and wake on demand. Default `1`.                                                                       |
+| `Gateway`                         | The address players reach the match servers at: `kongor.net`, `localhost`, `PUBLIC` (auto-detect public IP), an IP address, or a host name.                                      |
+| `MasterServer`                    | Where COMPEL and its match server manager find NEXUS's master server: a host name or an IP address with an optional port, without a scheme or a path (default `api.kongor.net`). |
+| `Location`                        | TMM region: `USW`, `USE`, `EU`, `AU`, `BR`, `RU`, `SEA`, or `NEWERTH`, which makes the match servers available to matches from every region.                                     |
+| `ServerNamePrefix`                | The base match server name. The instance index is appended.                                                                                                                      |
+| `UseProxy`                        | Whether to run the proxy (public port remapping + client challenge authentication. Defaults to `true`).                                                                          |
+| `PortRangeOffset`                 | Offset into the game/voice port windows. It also moves the ping port and the match server manager's own port. `base + offset + instances` must stay within the 100-port window.  |
+| `RuntimeArtefactsPath`            | `DEFAULT` (the host account's profile) or a fully qualified path, on every platform.                                                                                             |
+| `CDN`                             | The CDN base address or URL (default `cdn.kongor.net`). Without a scheme, `localhost`, `127.0.0.1`, and `[::1]` use HTTP and every other address uses HTTPS.                     |
+| `CDNSynchronisation`              | Whether to synchronise the distribution from the CDN on startup. Set `false` to skip the initial synchronisation for development/testing (the `/sync` endpoint still works).     |
+| `ControlPlaneAuthenticationToken` | Bearer token gating the management endpoints. Leave as `...` to disable remote management.                                                                                       |
+| `ControlPlanePort`                | TCP port for the HTTP control plane (default `8080`).                                                                                                                            |
 
 ## Running
 
@@ -45,22 +46,20 @@ All host-facing configuration lives in a single `COMPEL.json` beside the executa
 dotnet run --project source/COMPEL
 ```
 
-The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password` (and `ControlPlaneAuthenticationToken` to enable remote management, or `Gateway` to `localhost` for a local master server), then run COMPEL. Logs are written to the console and to a single `COMPEL.log` beside the executable.
+The release archives ship with a default `COMPEL.json` next to the executable; when it is missing, COMPEL writes one on first run and exits. Set at least `UserName` and `Password`; set `ControlPlaneAuthenticationToken` to enable remote management, and, for a local setup, set `Gateway` and `MasterServer` to the local host's addresses. Then run COMPEL, which waits for the master server that `MasterServer` names: while it does not answer, COMPEL logs that it is not reachable yet and tries again at growing intervals, up to a limit, for as long as it takes, and Ctrl+C, or the stop signal a container sends, ends the wait. Logs are written to the console and to a single `COMPEL.log` beside the executable.
 
-COMPEL does not require elevated privileges. It needs write access to its installation directory, because it mirrors the match server distribution into it and rewrites its own files during a self-update, and it refuses to start when that directory is not writable. Each match server binds itself to the processor it is assigned, and neither COMPEL nor the manager assigns a process priority, so no privileged operation is involved. The manager and its match servers write their runtime artefacts beneath the home directory COMPEL gives them, which `RuntimeArtefactsPath` sets, on every platform, so COMPEL also refuses to start when it cannot write there.
-
-On Windows, COMPEL must be installed in a directory whose full path contains a whitespace character, for example `C:\HoN Match Server`. The match server manager spawns each server instance with an unquoted executable path, which Heroes Of Newerth only parses correctly when that path contains a whitespace character; without one every instance starts as a game client instead of a dedicated server and never binds its game port. COMPEL refuses to start from such a path rather than let the manager come up and register servers that no client can join. The restriction does not apply on Linux, where the manager quotes the path it spawns.
+COMPEL does not require elevated privileges. It needs write access to its installation directory, because it mirrors the match server distribution into it and rewrites its own files during a self-update, and it refuses to start when that directory is not writable. Each match server binds itself to the processor it is assigned, and neither COMPEL nor the match server manager assigns a process priority, so no privileged operation is involved. The match server manager and its match servers write their runtime artefacts in the user directory COMPEL passes the match server manager with `-config`, which `RuntimeArtefactsPath` sets, on every platform, so COMPEL also refuses to start when it cannot write there.
 
 ## Control Plane
 
-| Method | Route                                                       | Authentication | Purpose                                                                              |
-| ------ | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------ |
-| `GET`  | `/ping`                                                     | none           | Latency probe.                                                                       |
-| `GET`  | `/health`, `/alive`                                         | none           | Readiness and liveness.                                                              |
-| `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, manager/proxy state, uptime. |
-| `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                    |
-| `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                      |
-| `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                    |
+| Method | Route                                                       | Authentication | Purpose                                                                                           |
+| ------ | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
+| `GET`  | `/ping`                                                     | none           | Latency probe.                                                                                    |
+| `GET`  | `/health`, `/alive`                                         | none           | Readiness and liveness.                                                                           |
+| `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, match server manager/proxy state, uptime. |
+| `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                                 |
+| `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                                   |
+| `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                                 |
 
 Authenticate management requests with `Authorization: Bearer <ControlPlaneAuthenticationToken>`, using the `ControlPlaneAuthenticationToken` from `COMPEL.json`.
 
@@ -80,7 +79,7 @@ Tagged pushes (`vX.Y.Z`) trigger `.github/workflows/publish-releases.yml`, which
 dotnet test --solution source/COMPEL.slnx
 ```
 
-The `COMPEL.Tests` project (TUnit) covers the port arithmetic, manager arguments, configuration validation and loading, the ping and proxy-challenge wire formats, and the proxy relay over loopback. The `global.json` at the repository root selects the Microsoft Testing Platform runner that TUnit requires. `.github/workflows/run-unit-tests.yml` runs the suite on Windows and Linux for every pull request to `main`.
+The `COMPEL.Tests` project (TUnit) covers the port arithmetic, match server manager arguments, configuration validation and loading, the ping and proxy-challenge wire formats, and the proxy relay over loopback. The `global.json` at the repository root selects the Microsoft Testing Platform runner that TUnit requires. `.github/workflows/run-unit-tests.yml` runs the suite on Windows and Linux for every pull request to `main`.
 
 ## Solution Layout
 

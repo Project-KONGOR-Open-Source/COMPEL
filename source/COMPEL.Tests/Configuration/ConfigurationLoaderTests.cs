@@ -84,6 +84,30 @@ public sealed class ConfigurationLoaderTests
     }
 
     [Test]
+    public async Task A_Master_Server_Explicitly_Set_To_Null_Falls_Back_To_Its_Default()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, """{ "MasterServer": null }""");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(file.MasterServer).IsNotNull();
+                await Assert.That(file.MasterServer.Value).IsEqualTo("api.kongor.net");
+            }
+        }
+
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
     public async Task A_Setting_Explicitly_Set_To_Null_Falls_Back_To_Its_Default()
     {
         string path = TemporaryPath();
@@ -158,6 +182,26 @@ public sealed class ConfigurationLoaderTests
         {
             await Assert.That(message).IsNotNull();
             await Assert.That(message?.StartsWith(@"""COMPEL.json"" Could Not Be Read")).IsTrue();
+        }
+    }
+
+    [Test]
+    public async Task A_Missing_Master_Server_Setting_Takes_The_Default()
+    {
+        string path = TemporaryPath();
+
+        try
+        {
+            File.WriteAllText(path, "{ }");
+
+            ConfigurationFile file = ConfigurationLoader.Load(path);
+
+            await Assert.That(file.MasterServer.Value).IsEqualTo("api.kongor.net");
+        }
+
+        finally
+        {
+            File.Delete(path);
         }
     }
 }

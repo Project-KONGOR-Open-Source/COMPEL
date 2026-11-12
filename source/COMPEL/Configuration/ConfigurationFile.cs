@@ -11,6 +11,7 @@ public sealed class ConfigurationFile
     public InstancesSetting Instances { get; set; } = new ();
     public WarmInstancesTargetSetting WarmInstancesTarget { get; set; } = new ();
     public GatewaySetting Gateway { get; set; } = new ();
+    public MasterServerSetting MasterServer { get; set; } = new ();
     public LocationSetting Location { get; set; } = new ();
     public ServerNamePrefixSetting ServerNamePrefix { get; set; } = new ();
     public UseProxySetting UseProxy { get; set; } = new ();
@@ -25,61 +26,67 @@ public sealed class ConfigurationFile
 public sealed class UserNameSetting
 {
     public string Value { get; set; } = "USERNAME";
-    public string Description => "The name of the user which will host the game servers. This needs to match the name of a registered Project KONGOR user.";
+    public string Description => "The name of the user which will host the match servers. This needs to match the name of a registered Project KONGOR user, so it can only contain letters, numbers, underscores, and hyphens.";
 }
 
 public sealed class PasswordSetting
 {
     public string Value { get; set; } = "PASSWORD";
-    public string Description => "The password of the user which will host the game servers. This needs to match the password of the registered Project KONGOR user set to host the game servers.";
+    public string Description => "The password of the user which will host the match servers. This needs to match the password of the registered Project KONGOR user set to host the match servers.";
 }
 
 public sealed class InstancesSetting
 {
     public int Value { get; set; } = 1;
-    public string Description => "The number of server instances to spawn. This must be between one and the number of logical processors. The server manager spreads the instances across the available processors, each of which binds itself to the processor it is assigned.";
+    public string Description => "The number of server instances to spawn. This must be between one and the number of logical processors. The match server manager spreads the instances across the available processors, each of which binds itself to the processor it is assigned.";
 }
 
 public sealed class WarmInstancesTargetSetting
 {
     public int Value { get; set; } = 1;
-    public string Description => "The number of server instances the manager keeps idle (warm and ready to host a match) at any time; the remaining instances are put to sleep to conserve resources and are woken on demand as idle instances are taken up by matches. This must be between zero and the value of 'Instances'. The default of one keeps a single warm spare, which is the manager's own default; raising it makes more instances immediately selectable in the game client, at the cost of the resources the additional warm instances consume.";
+    public string Description => "The number of server instances the match server manager keeps idle (warm and ready to host a match) at any time; the remaining instances are put to sleep to conserve resources and are woken on demand as idle instances are taken up by matches. This must be between zero and the value of 'Instances'. The default of one keeps a single warm spare, which is the match server manager's own default; raising it makes more instances immediately selectable in the game client, at the cost of the resources the additional warm instances consume.";
 }
 
 public sealed class GatewaySetting
 {
     public string Value { get; set; } = "kongor.net";
-    public string Description => "The entry point for game servers and the server manager. Use 'kongor.net' for the official public gateway, 'localhost' for local development, 'PUBLIC' to auto-detect the public IP address, a LAN or public IP address, or a local or public host name to resolve.";
+    public string Description => "The address players reach the match servers at. Use 'kongor.net' for the official public gateway, 'localhost' for local development, 'PUBLIC' to auto-detect the public IP address, a LAN or public IP address, or a local or public host name to resolve.";
+}
+
+public sealed class MasterServerSetting
+{
+    public string Value { get; set; } = "api.kongor.net";
+    public string Description => "Where COMPEL and its match server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path. Use 'api.kongor.net' for the official public master server, or 'localhost:5555' for local development.";
 }
 
 public sealed class LocationSetting
 {
     public string Value { get; set; } = "EU";
-    public string Description => "Normally, the location can be set to any value, but, in order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH'.";
+    public string Description => "In order for the server to be TMM-compatible, only the following values are valid: 'USW', 'USE', 'EU', 'AU', 'BR', 'RU', 'SEA', and 'NEWERTH', which makes the match servers available to matches from every region.";
 }
 
 public sealed class ServerNamePrefixSetting
 {
     public string Value { get; set; } = "KONGOR ARENA";
-    public string Description => "The base name of the game server instances. The name of each server instance will be the concatenation of this base name and the 1-based index of the instance.";
+    public string Description => "The base name of the match server instances. The name of each server instance will be the concatenation of this base name and the 1-based index of the instance.";
 }
 
 public sealed class UseProxySetting
 {
     public bool Value { get; set; } = true;
-    public string Description => "Whether to run COMPEL's built-in proxy in front of the game servers. When enabled, clients connect to public ports offset 10000 above the local server ports (e.g. 21235 instead of 11235); the proxy forwards them to the servers and authenticates each client with the challenge protocol required on that port range. Set to 'false' to make the local server ports public directly, without the proxy.";
+    public string Description => "Whether to run COMPEL's built-in proxy in front of the match servers. When enabled, clients connect to public ports offset 10000 above the local server ports (21235 instead of 11235, for example); the proxy forwards them to the servers and authenticates each client with the challenge protocol required on that port range. Set to 'false' to make the local server ports public directly, without the proxy.";
 }
 
 public sealed class PortRangeOffsetSetting
 {
     public int Value { get; set; }
-    public string Description => "The offset from the start of the valid game/voice port ranges at which the game/voice ports to be used at runtime will start. The game/voice port ranges without the proxy are 11235-11335/11435-11535, and with the proxy they are 21235-21335/21435-21535.";
+    public string Description => "The offset from the start of the valid game/voice port ranges at which the game/voice ports to be used at runtime will start. It also moves the ping port and the match server manager's own port. The game/voice port ranges without the proxy are 11235-11335/11435-11535, and with the proxy they are 21235-21335/21435-21535.";
 }
 
 public sealed class RuntimeArtefactsPathSetting
 {
     public string Value { get; set; } = "DEFAULT";
-    public string Description => "The base directory beneath which the match server writes its runtime artefacts (e.g. replays, logs). This value is either the 'DEFAULT' alias, which places artefacts beneath the host account's profile (its 'HON' folder on Windows and its '.HON' folder on Linux, where everything else is written), or a fully qualified path to use as the base profile directory instead. This setting applies on every platform.";
+    public string Description => "The base directory beneath which the match server writes its runtime artefacts (its replays and logs). This value is either the 'DEFAULT' alias, which places artefacts in the host account's profile (its 'HON' directory on Windows and its '.HON' directory on Linux, where everything else is written), or a fully qualified path in which the same directory is used instead. This setting applies on every platform.";
 }
 
 public sealed class CDNSetting

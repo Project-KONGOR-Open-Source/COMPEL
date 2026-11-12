@@ -22,14 +22,19 @@ public sealed class MatchServerManagerOptions
     public int Instances { get; set; } = 1;
 
     /// <summary>
-    ///     The number of server instances the manager keeps idle (warm and ready to host) at any time; the remaining instances are put to sleep and woken on demand. Must be between zero and <see cref="Instances"/>.
+    ///     The number of server instances the match server manager keeps idle (warm and ready to host) at any time; the remaining instances are put to sleep and woken on demand. Must be between zero and <see cref="Instances"/>.
     /// </summary>
     public int WarmInstancesTarget { get; set; } = 1;
 
     /// <summary>
-    ///     The entry point for game servers and the server manager: "localhost" for local development, "PUBLIC" to auto-detect the public IP address, a LAN or public IP address, or a host name to resolve.
+    ///     The address players reach the match servers at: "localhost" for local development, "PUBLIC" to auto-detect the public IP address, a LAN or public IP address, or a host name to resolve.
     /// </summary>
     public string Gateway { get; set; } = "kongor.net";
+
+    /// <summary>
+    ///     Where COMPEL and its match server manager find the master server: a host name or an IP address with an optional port, without a scheme or a path.
+    /// </summary>
+    public string MasterServer { get; set; } = "api.kongor.net";
 
     /// <summary>
     ///     The server region. In order for the server to be TMM-compatible, only the values "USW", "USE", "EU", "AU", "BR", "RU", "SEA", and "NEWERTH" are valid.
@@ -37,7 +42,7 @@ public sealed class MatchServerManagerOptions
     public string Location { get; set; } = "EU";
 
     /// <summary>
-    ///     The base name of the game server instances. The server manager appends the one-based index of each instance to this base name.
+    ///     The base name of the game server instances. The match server manager appends the one-based index of each instance to this base name.
     /// </summary>
     public string ServerNamePrefix { get; set; } = "KONGOR ARENA";
 
@@ -52,8 +57,8 @@ public sealed class MatchServerManagerOptions
     public int PortRangeOffset { get; set; }
 
     /// <summary>
-    ///     The base directory beneath which the match server manager and servers write their runtime artefacts (replays and logs). This value is either the alias "DEFAULT" or a fully qualified path used as the base profile directory.
-    ///     "DEFAULT" places the artefacts beneath the host account's profile (its "HON" folder on Windows and its ".HON" folder on Linux), which is where Heroes Of Newerth writes everything else.
+    ///     The base directory beneath which the match server manager and servers write their runtime artefacts (replays and logs). This value is either the alias "DEFAULT" or a fully qualified path in which the same directory is used instead.
+    ///     "DEFAULT" places the artefacts in the host account's profile (its "HON" directory on Windows and its ".HON" directory on Linux), which is where Heroes Of Newerth writes everything else.
     ///     This applies on every platform.
     /// </summary>
     public string RuntimeArtefactsPath { get; set; } = "DEFAULT";

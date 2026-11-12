@@ -26,7 +26,7 @@ public sealed class CDNOptions
     public int ParallelTransfers { get; set; } = 8;
 
     /// <summary>
-    ///     The directory into which the match server distribution is installed and from which the manager executable is launched. Empty (the default) installs the distribution alongside the COMPEL executable; a relative path is resolved against the executable's directory, and a fully qualified path is used as-is.
+    ///     The directory into which the match server distribution is installed and from which the match server manager executable is launched. Empty (the default) installs the distribution alongside the COMPEL executable; a relative path is resolved against the executable's directory, and a fully qualified path is used as-is.
     /// </summary>
     public string InstallationDirectory { get; set; } = string.Empty;
 

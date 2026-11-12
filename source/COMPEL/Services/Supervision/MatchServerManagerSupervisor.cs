@@ -2,8 +2,8 @@ namespace COMPEL.Services.Supervision;
 
 /// <summary>
 ///     Launches and supervises the Heroes Of Newerth match server manager process.
-///     It waits for the distribution to be synchronised, resolves the server address, then keeps the manager running, restarting it (with backoff) if it exits unexpectedly or fails to start in the first place.
-///     The control plane drives <see cref="RequestStart"/>, <see cref="RequestStop"/>, and <see cref="RequestRestart"/>; on shutdown the manager and its spawned servers are stopped.
+///     It waits for the distribution to be synchronised, resolves the server address, then keeps the match server manager running, restarting it (with backoff) if it exits unexpectedly or fails to start in the first place.
+///     The control plane drives <see cref="RequestStart"/>, <see cref="RequestStop"/>, and <see cref="RequestRestart"/>; on shutdown the match server manager and its spawned servers are stopped.
 /// </summary>
 public sealed class MatchServerManagerSupervisor : BackgroundService
 {
@@ -44,7 +44,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     public bool IsRunning => managerRunning;
 
     /// <summary>
-    ///     Whether the manager is intended to be running. Distinct from <see cref="IsRunning"/>: a crashed manager reports <see cref="IsRunning"/> as <see langword="false"/> while this stays <see langword="true"/> because the reconcile loop will relaunch it. The control plane requires this to be <see langword="false"/> before a synchronisation is accepted.
+    ///     Whether the match server manager is intended to be running. Distinct from <see cref="IsRunning"/>: a crashed match server manager reports <see cref="IsRunning"/> as <see langword="false"/> while this stays <see langword="true"/> because the reconcile loop will relaunch it. The control plane requires this to be <see langword="false"/> before a synchronisation is accepted.
     /// </summary>
     public bool DesiredRunning => desiredRunning;
 
@@ -57,7 +57,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         try { await distribution.WaitUntilReady(stoppingToken).ConfigureAwait(false); }
         catch (OperationCanceledException) { return; }
 
-        // Prerequisites Belong To The Machine Rather Than To The Distribution, So They Are Checked Once, Before The First Launch; Without One, The Manager Would Fail With The Operating System's Own, Far Less Helpful, Message
+        // Prerequisites Belong To The Machine Rather Than To The Distribution, So They Are Checked Once, Before The First Launch; Without One, The Match Server Manager Would Fail With The Operating System's Own, Far Less Helpful, Message
         PrerequisitesCheckResult prerequisites;
 
         try { prerequisites = await PrerequisitesCheck.Run(distribution.InstallationDirectory, stoppingToken).ConfigureAwait(false); }
@@ -70,12 +70,12 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
                 break;
 
             case PrerequisitesCheckOutcome.Missing:
-                logger.LogError("FAIL: Missing Prerequisites; The Manager Will Not Be Launched");
+                logger.LogError("FAIL: Missing Prerequisites; The Match Server Manager Will Not Be Launched");
                 logger.LogError("{Report}", prerequisites.Report);
                 return;
 
             default:
-                logger.LogError("FAIL: The Prerequisites Check Could Not Run :: {Report}; The Manager Will Not Be Launched", prerequisites.Report);
+                logger.LogError("FAIL: The Prerequisites Check Could Not Run :: {Report}; The Match Server Manager Will Not Be Launched", prerequisites.Report);
                 return;
         }
 
@@ -108,8 +108,8 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         LogPortAllocation();
 
-        // When The Proxy Is Enabled The Manager Advertises Public Ports (The Local Ports Raised By "PortPlan.ProxyPublicOffset") That Only Work If The Proxy Bound Them
-        // If No Forwarder Could Bind, Launching The Manager Would Register Unreachable Public Ports With The Master Server, So The Launch Is Refused Instead
+        // When The Proxy Is Enabled The Match Server Manager Advertises Public Ports (The Local Ports Raised By "PortPlan.ProxyPublicOffset") That Only Work If The Proxy Bound Them
+        // If No Forwarder Could Bind, Launching The Match Server Manager Would Register Unreachable Public Ports With The Master Server, So The Launch Is Refused Instead
         if (options.UseProxy)
         {
             bool proxyReady;
@@ -119,14 +119,14 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
             if (proxyReady is false)
             {
-                logger.LogError("The Proxy Is Enabled But No Public Port Could Be Bound; The Manager Will Not Be Launched");
+                logger.LogError("The Proxy Is Enabled But No Public Port Could Be Bound; The Match Server Manager Will Not Be Launched");
 
                 return;
             }
         }
 
         // Event-Driven Reconcile Loop: Each Pass Brings The Process State Into Line With The Desired State, Then Waits For The Next Change (A Process Exit Or A Control-Plane Request)
-        // Whenever The Manager Should Be Running But Isn't, The Wait Is Bounded By "RestartBackoff" So A Launch Failure (For Example A Missing Executable) Retries Automatically Instead Of Stalling Forever With No Signal To Wake It
+        // Whenever The Match Server Manager Should Be Running But Isn't, The Wait Is Bounded By "RestartBackoff" So A Launch Failure (For Example A Missing Executable) Retries Automatically Instead Of Stalling Forever With No Signal To Wake It
         while (stoppingToken.IsCancellationRequested is false)
         {
             await Reconcile(stoppingToken).ConfigureAwait(false);
@@ -194,7 +194,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         string executable = distribution.ManagerExecutablePath;
 
         if (File.Exists(executable) is false)
-            throw new FileNotFoundException($@"Manager Executable Was Not Found At ""{executable}""");
+            throw new FileNotFoundException($@"Match Server Manager's Executable Was Not Found At ""{executable}""");
 
         // The Synchronised Server Binary Arrives Without The Unix Execute Bit, So It Is Set Here Before Every Launch (On Windows This Is A No-Op)
         EnsureExecutable(executable);
@@ -214,14 +214,14 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         try { Directory.CreateDirectory(artefacts.ArtefactsDirectory); }
         catch (Exception exception) { logger.LogDebug(exception, "Could Not Pre-Create The Artefacts Directory {Directory}", artefacts.ArtefactsDirectory); }
 
-        // The Manager And Its Match Servers Run COMPEL's Configuration File At The End Of Their Start-Up, So It Is Rewritten Before Every Launch, Once Synchronisation Has Settled The Installation
+        // The Match Server Manager And Its Match Servers Run COMPEL's Configuration File At The End Of Their Start-Up, So It Is Rewritten Before Every Launch, Once Synchronisation Has Settled The Installation
         try { CustomConfiguration.Write(distribution.InstallationDirectory); }
         catch (Exception exception) { logger.LogWarning(exception, "Could Not Write The Custom Configuration File Into {Directory}", distribution.InstallationDirectory); }
 
-        // Sweep Before Every Launch, Not Only At Startup: A Previous Manager's Spawned Servers Can Be Reparented (For Example To The Init Process) And So Escape "Process.Kill(entireProcessTree)", Leaving Them Holding The Ports This Launch Is About To Bind
+        // Sweep Before Every Launch, Not Only At Startup: A Previous Match Server Manager's Spawned Servers Can Be Reparented (For Example To The Init Process) And So Escape "Process.Kill(entireProcessTree)", Leaving Them Holding The Ports This Launch Is About To Bind
         KillOrphanedProcesses();
 
-        string[] arguments = ManagerArguments.Build(options, Ports, address, addressResolver.MasterServerHostAndPort);
+        string[] arguments = ManagerArguments.Build(options, Ports, address, addressResolver.MasterServerHostAndPort, artefacts.ArtefactsDirectory);
 
         ProcessStartInfo startInfo = new (executable)
         {
@@ -237,12 +237,6 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
             foreach (string argument in arguments)
                 startInfo.ArgumentList.Add(argument);
 
-        // Heroes Of Newerth Keeps Its Root Beneath The Home Directory, So The Child's Home Is Redirected To The Resolved Profile Directory
-        if (OperatingSystem.IsWindows())
-            startInfo.EnvironmentVariables["USERPROFILE"] = artefacts.ProfileDirectory;
-        else
-            startInfo.EnvironmentVariables["HOME"] = artefacts.ProfileDirectory;
-
         Process process = new () { StartInfo = startInfo, EnableRaisingEvents = true };
 
         process.Exited += OnProcessExited;
@@ -256,7 +250,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         logger.LogInformation("Launched The Match Server Manager (Process {ProcessID})", process.Id);
 
         // If The Process Exited Between "Start" And Now, The "Exited" Event May Have Already Run And Cleared The Running Flag Before This Method Set It
-        // Re-Check So An Instantly-Exiting Manager Does Not Leave The State Stuck Reporting Running With No Live Process, And Wake The Reconcile Loop To Apply The Backoff And Relaunch
+        // Re-Check So An Instantly-Exiting Match Server Manager Does Not Leave The State Stuck Reporting Running With No Live Process, And Wake The Reconcile Loop To Apply The Backoff And Relaunch
         if (process.HasExited)
         {
             managerRunning = false;
@@ -282,7 +276,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     }
 
     /// <summary>
-    ///     Kills any match server manager process left over from a previous, uncleanly-terminated run (a crash, a forced kill, a host reboot), identified by matching its executable path against this installation's manager executable, so it cannot keep holding the ports the new manager is about to bind.
+    ///     Kills any match server manager process left over from a previous, uncleanly-terminated run (a crash, a forced kill, a host reboot), identified by matching its executable path against this installation's match server manager executable, so it cannot keep holding the ports the new match server manager is about to bind.
     /// </summary>
     private void KillOrphanedProcesses()
     {
@@ -353,11 +347,29 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     {
         managerRunning = false;
 
+        if (desiredRunning)
+            LogExit(sender);
+
         reconcileSignal.Release();
     }
 
+    private void LogExit(object? sender)
+    {
+        // The Process Object Can Be Disposed By A Concurrent Stop Or Relaunch, In Which Case The Exit Code Is No Longer Readable
+        try
+        {
+            if (sender is Process process)
+                logger.LogWarning("{ManagerExit}", ManagerExit.Describe(process.ExitCode, Ports));
+        }
+
+        catch (InvalidOperationException)
+        {
+            logger.LogWarning("The Match Server Manager Exited, And Its Exit Code Could Not Be Read");
+        }
+    }
+
     /// <summary>
-    ///     Requests that the manager be running.
+    ///     Requests that the match server manager be running.
     /// </summary>
     public void RequestStart()
     {
@@ -367,7 +379,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     }
 
     /// <summary>
-    ///     Requests that the manager be stopped and kept stopped.
+    ///     Requests that the match server manager be stopped and kept stopped.
     /// </summary>
     public void RequestStop()
     {
@@ -377,7 +389,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
     }
 
     /// <summary>
-    ///     Requests that the manager be restarted. Killing the running process triggers the reconcile loop to relaunch it.
+    ///     Requests that the match server manager be restarted. Killing the running process triggers the reconcile loop to relaunch it.
     ///     Acquires the same lifecycle gate as <see cref="Reconcile"/> so this cannot race a concurrent launch or stop for the same process.
     /// </summary>
     public async Task RequestRestart(CancellationToken cancellationToken)
@@ -417,10 +429,10 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         logger.LogInformation
         (
-            "Port Allocation: Game {LocalGameStart}-{LocalGameEnd}, Voice {LocalVoiceStart}-{LocalVoiceEnd}, Public Game {PublicGameStart}-{PublicGameEnd}, Public Voice {PublicVoiceStart}-{PublicVoiceEnd}, Ping {PingPort}{ProxyNote}",
+            "Port Allocation: Game {LocalGameStart}-{LocalGameEnd}, Voice {LocalVoiceStart}-{LocalVoiceEnd}, Public Game {PublicGameStart}-{PublicGameEnd}, Public Voice {PublicVoiceStart}-{PublicVoiceEnd}, Ping {PingPort}, Match Server Manager {ManagerPort}{ProxyNote}",
             Ports.LocalGameStart, Ports.LocalGameEnd, Ports.LocalVoiceStart, Ports.LocalVoiceEnd,
             Ports.PublicGameStart, Ports.PublicGameEnd, Ports.PublicVoiceStart, Ports.PublicVoiceEnd,
-            Ports.PingPort, Ports.UseProxy ? " (Proxy Enabled)" : string.Empty
+            Ports.PingPort, Ports.ManagerPort, Ports.UseProxy ? " (Proxy Enabled)" : string.Empty
         );
 
         logger.LogInformation("Runtime Artefacts Directory: {Directory}", artefacts.ArtefactsDirectory);

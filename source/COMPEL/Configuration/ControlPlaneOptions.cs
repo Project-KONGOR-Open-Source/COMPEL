@@ -1,7 +1,7 @@
 namespace COMPEL.Configuration;
 
 /// <summary>
-///     Configures the HTTP control plane that NEXUS and host operators use to query and manage this match server manager.
+///     Configures the HTTP control plane that the master server and host operators use to query and manage this match server manager.
 /// </summary>
 public sealed class ControlPlaneOptions
 {

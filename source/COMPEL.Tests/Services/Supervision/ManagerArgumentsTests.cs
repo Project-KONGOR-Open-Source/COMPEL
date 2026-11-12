@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
-///     Verifies the command line built for the Heroes Of Newerth manager: the flag set the legacy COMPEL relied on, the new re-authentication frequency, the upper-casing of the server location, and the quoting the "-execute" payload requires to survive on both platforms.
+///     Verifies the command line built for the match server manager: the flag set the legacy COMPEL relied on, the new re-authentication frequency, the upper-casing of the server location, and the quoting the "-execute" payload requires to survive on both platforms.
 /// </summary>
 public sealed class ManagerArgumentsTests
 {
@@ -19,15 +19,17 @@ public sealed class ManagerArgumentsTests
         RuntimeArtefactsPath = "DEFAULT"
     };
 
+    private static string ArtefactsDirectory => Path.Combine(Path.GetTempPath(), OperatingSystem.IsWindows() ? "HON" : ".HON");
+
     private static string[] Build()
     {
         MatchServerManagerOptions options = SampleOptions();
 
-        return ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net");
+        return ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory);
     }
 
     [Test]
-    public async Task The_Argument_Vector_Starts_With_The_Manager_And_Master_Server_Flags()
+    public async Task The_Argument_Vector_Starts_With_The_Match_Server_Manager_And_Master_Server_Flags()
     {
         string[] arguments = Build();
 
@@ -75,16 +77,16 @@ public sealed class ManagerArgumentsTests
 
         using (Assert.Multiple())
         {
-            // The Master Login Carries A Trailing Colon So The Manager Can Append A Per-Instance Index
-            await Assert.That(joined.Contains("Set man_masterLogin KONGOR:")).IsTrue();
+            // The Master Login Carries A Trailing Colon So The Match Server Manager Can Append A Per-Instance Index
+            await Assert.That(joined.Contains(@"Set man_masterLogin KONGOR\:")).IsTrue();
             await Assert.That(joined.Contains("Set man_startServerPort 11235")).IsTrue();
             await Assert.That(joined.Contains("Set man_endServerPort 11236")).IsTrue();
             await Assert.That(joined.Contains("Set man_enableProxy true")).IsTrue();
             await Assert.That(joined.Contains("Set man_reauthFrequency 30000")).IsTrue();
             await Assert.That(joined.Contains("Set man_idleTarget 2")).IsTrue();
-            await Assert.That(joined.Contains("Set host_affinity -1")).IsTrue();
+            await Assert.That(joined.Contains(@"Set host_affinity \-1")).IsTrue();
             await Assert.That(joined.Contains("Set svr_location EU")).IsTrue();
-            await Assert.That(joined.Contains("Set svr_ip 1.2.3.4")).IsTrue();
+            await Assert.That(joined.Contains(@"Set svr_ip 1\.2\.3\.4")).IsTrue();
         }
     }
 
@@ -94,7 +96,7 @@ public sealed class ManagerArgumentsTests
         MatchServerManagerOptions options = SampleOptions();
         options.Location = "eu";
 
-        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net"));
+        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory));
 
         await Assert.That(joined.Contains("Set svr_location EU")).IsTrue();
     }
@@ -116,10 +118,90 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
-    public async Task The_Server_Name_Gets_Two_Trailing_Workaround_Tokens()
+    public async Task The_Server_Name_Is_Passed_As_Written()
     {
-        string result = ManagerArguments.ServerNameWithWhitespaceWorkaround("KONGOR ARENA");
+        MatchServerManagerOptions options = SampleOptions();
+        options.ServerNamePrefix = "My Server Name";
 
-        await Assert.That(result).IsEqualTo("KONGOR ARENA 0 0");
+        string joined = string.Join(' ', ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory));
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(joined.Contains(@"Set svr_name My\ Server\ Name;")).IsTrue();
+            await Assert.That(joined.Contains(@"Name\ 0")).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task A_Value_Ending_In_A_Backslash_Keeps_The_Closing_Quote()
+    {
+        MatchServerManagerOptions options = SampleOptions();
+        options.Password = @"abc\";
+
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory);
+        string payload = arguments[Array.IndexOf(arguments, "-execute") + 1];
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(payload.Contains(@"Set man_masterPassword abc\\;")).IsTrue();
+            await Assert.That(payload.EndsWith('"')).IsTrue();
+        }
+    }
+
+    [Test]
+    public async Task The_Match_Server_Manager_Port_Comes_From_The_Port_Plan()
+    {
+        string joined = string.Join(' ', Build());
+
+        await Assert.That(joined.Contains("Set man_port 1135")).IsTrue();
+    }
+
+    [Test]
+    public async Task The_User_Directory_Is_Passed_With_Config()
+    {
+        string[] arguments = Build();
+
+        int configIndex = Array.IndexOf(arguments, "-config");
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(configIndex).IsGreaterThanOrEqualTo(0);
+            await Assert.That(arguments[configIndex + 1]).IsEqualTo('"' + ArtefactsDirectory + '"');
+        }
+    }
+
+    [Test]
+    public async Task A_Runtime_Artefacts_Path_With_A_Space_Is_Quoted()
+    {
+        string runtime = OperatingSystem.IsWindows() ? @"C:\HoN Runtime" : "/srv/hon runtime";
+        string expected = Path.Combine(runtime, OperatingSystem.IsWindows() ? "HON" : ".HON");
+
+        MatchServerManagerOptions options = SampleOptions();
+        options.RuntimeArtefactsPath = runtime;
+
+        string directory = new ArtefactsLocator(Options.Create(options)).ArtefactsDirectory;
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", directory);
+
+        await Assert.That(arguments[Array.IndexOf(arguments, "-config") + 1]).IsEqualTo('"' + expected + '"');
+    }
+
+    [Test]
+    public async Task A_Trailing_Separator_Is_Trimmed_So_The_Closing_Quote_Is_Not_Escaped()
+    {
+        MatchServerManagerOptions options = SampleOptions();
+
+        string[] arguments = ManagerArguments.Build(options, new PortPlan(options), "1.2.3.4", "api.kongor.net", ArtefactsDirectory + Path.DirectorySeparatorChar);
+
+        await Assert.That(arguments[Array.IndexOf(arguments, "-config") + 1]).IsEqualTo('"' + ArtefactsDirectory + '"');
+    }
+
+    [Test]
+    public async Task The_Directory_Arguments_Come_Before_Execute()
+    {
+        string[] arguments = Build();
+
+        string[] flags = arguments.Where(argument => argument.StartsWith('-')).ToArray();
+
+        await Assert.That(string.Join(' ', flags)).IsEqualTo("-manager -noconfig -mod -config -execute -masterserver -ascensionserver");
     }
 }

@@ -43,14 +43,12 @@ public sealed class AddressResolverTests
     }
 
     [Test]
-    public async Task The_Master_Server_Endpoint_Uses_The_Local_Port_For_A_Localhost_Gateway()
+    [Arguments("localhost", "api.kongor.net")]
+    [Arguments("kongor.net", "192.168.0.10:5555")]
+    public async Task The_Master_Server_Is_The_Setting_Whatever_The_Gateway(string gateway, string masterServer)
     {
-        await Assert.That(Resolver("localhost").MasterServerHostAndPort).IsEqualTo("127.0.0.1:5555");
-    }
+        AddressResolver resolver = new (Options.Create(new MatchServerManagerOptions { Gateway = gateway, MasterServer = masterServer }), NullLogger<AddressResolver>.Instance);
 
-    [Test]
-    public async Task The_Master_Server_Endpoint_Uses_The_Public_Gateway_Without_A_Port_Otherwise()
-    {
-        await Assert.That(Resolver("kongor.net").MasterServerHostAndPort).IsEqualTo("api.kongor.net");
+        await Assert.That(resolver.MasterServerHostAndPort).IsEqualTo(masterServer);
     }
 }
