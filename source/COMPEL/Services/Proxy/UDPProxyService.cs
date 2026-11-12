@@ -39,7 +39,7 @@ public sealed class UDPProxyService : BackgroundService
     // Shared Across Every Forwarder So Attack Pressure On Any Public Port Activates The Under-Attack Protection Globally
     private readonly AttackIndicatorContainer attackIndicator;
 
-    // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Manager Rather Than Advertise Unreachable Public Ports
+    // Completes With TRUE Once The Proxy Is Usable (Disabled, Or At Least One Forwarder Bound) And FALSE When The Proxy Is Enabled But No Forwarder Could Bind, So The Supervisor Can Refuse To Launch The Match Server Manager Rather Than Advertise Unreachable Public Ports
     private readonly TaskCompletionSource<bool> ready = new (TaskCreationOptions.RunContinuationsAsynchronously);
 
     private readonly SemaphoreSlim lifecycleGate = new (1, 1);
@@ -70,7 +70,7 @@ public sealed class UDPProxyService : BackgroundService
     public bool IsRunning => running;
 
     /// <summary>
-    ///     Completes once the proxy has finished its bind attempt: <see langword="true"/> when the proxy is disabled or at least one forwarder bound, and <see langword="false"/> when the proxy is enabled but no forwarder could bind. The supervisor awaits this before launching the manager so it does not advertise public ports nothing is listening on.
+    ///     Completes once the proxy has finished its bind attempt: <see langword="true"/> when the proxy is disabled or at least one forwarder bound, and <see langword="false"/> when the proxy is enabled but no forwarder could bind. The supervisor awaits this before launching the match server manager so it does not advertise public ports nothing is listening on.
     /// </summary>
     public Task<bool> WaitUntilReady(CancellationToken cancellationToken) => ready.Task.WaitAsync(cancellationToken);
 

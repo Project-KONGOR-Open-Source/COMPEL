@@ -66,9 +66,9 @@ public static class ControlPlaneEndpoints
 
         management.MapPost("/sync", IResult (DistributionSynchronisationService distribution, MatchServerManagerSupervisor supervisor, IHostApplicationLifetime lifetime) =>
         {
-            // Synchronising Rewrites The Installation Directory The Manager Runs From
-            // Doing So While The Manager Is Running Would Delete Or Overwrite Files The Live Servers Hold Open (A Sharing Violation On Windows, A Replaced Inode On Linux), So The Manager Must Be Stopped First
-            // Checking The Desired State (Not Just The Live State) Also Rejects The Request When The Manager Has Merely Crashed And The Supervisor Is About To Relaunch It
+            // Synchronising Rewrites The Installation Directory The Match Server Manager Runs From
+            // Doing So While The Match Server Manager Is Running Would Delete Or Overwrite Files The Live Servers Hold Open (A Sharing Violation On Windows, A Replaced Inode On Linux), So The Match Server Manager Must Be Stopped First
+            // Checking The Desired State (Not Just The Live State) Also Rejects The Request When The Match Server Manager Has Merely Crashed And The Supervisor Is About To Relaunch It
             if (supervisor.IsRunning || supervisor.DesiredRunning)
                 return TypedResults.Conflict(new ActionResponse("sync", false, @"The Match Server Manager Must Be Stopped Via ""/instances/stop"" Before Synchronising"));
 

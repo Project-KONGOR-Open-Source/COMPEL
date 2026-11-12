@@ -1,7 +1,7 @@
 namespace COMPEL.Services.Supervision;
 
 /// <summary>
-///     Checks that the master server answers, the way the launcher probes it: a HEAD request to its health endpoint over plain HTTP, which is how the manager talks to it.
+///     Checks that the master server answers, the way the launcher probes it: a HEAD request to its health endpoint over plain HTTP, which is how the match server manager talks to it.
 /// </summary>
 public static class MasterServerProbe
 {

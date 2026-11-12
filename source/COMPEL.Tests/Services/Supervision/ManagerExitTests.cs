@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
-///     Verifies the description of a manager exit that is logged when the manager stops while it is meant to be running.
+///     Verifies the description of a match server manager exit that is logged when the match server manager stops while it is meant to be running.
 /// </summary>
 public sealed class ManagerExitTests
 {

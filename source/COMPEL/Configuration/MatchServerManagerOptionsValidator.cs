@@ -1,7 +1,7 @@
 namespace COMPEL.Configuration;
 
 /// <summary>
-///     Validates <see cref="MatchServerManagerOptions"/> at startup, reproducing the pre-flight checks the legacy COMPEL performed before launching the manager.
+///     Validates <see cref="MatchServerManagerOptions"/> at startup, reproducing the pre-flight checks the legacy COMPEL performed before launching the match server manager.
 ///     Unlike the legacy implementation, which exited the process on the first failure, this collects every failure so the operator sees all configuration problems at once.
 /// </summary>
 public sealed partial class MatchServerManagerOptionsValidator : IValidateOptions<MatchServerManagerOptions>
@@ -92,7 +92,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
         else if (SupportedAliases.Contains(options.RuntimeArtefactsPath.ToUpperInvariant()) is false && Path.IsPathFullyQualified(options.RuntimeArtefactsPath) is false)
             failures.Add($@"""RuntimeArtefactsPath"" ""{options.RuntimeArtefactsPath}"" Is Not Valid; Use The ""DEFAULT"" Alias Or A Fully Qualified Path");
 
-        // The Console Refuses A Command Longer Than Its Limit Whole, Which Would Start The Manager With None Of COMPEL's Settings; The Widest Address Gives The Longest Payload
+        // The Console Refuses A Command Longer Than Its Limit Whole, Which Would Start The Match Server Manager With None Of COMPEL's Settings; The Widest Address Gives The Longest Payload
         // This Runs Last, Because Building The Arguments Needs Options That Passed Every Other Check
         if (failures.Count is 0)
         {

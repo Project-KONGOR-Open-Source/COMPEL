@@ -1,33 +1,33 @@
 namespace COMPEL.Services.Supervision;
 
 /// <summary>
-///     Builds the command-line arguments passed to the Heroes Of Newerth manager, faithfully reproducing the configuration flags the legacy COMPEL set via its "-execute" string.
+///     Builds the command-line arguments passed to the match server manager, faithfully reproducing the configuration flags the legacy COMPEL set via its "-execute" string.
 /// </summary>
 public static class ManagerArguments
 {
     /// <summary>
     ///     Builds the argument vector for launching the match server manager: "-manager", "-noconfig", "-mod", "base;game;KONGOR/configuration;KONGOR/updates;KONGOR/extensions;server-manager", "-config", "\"directory\"", "-execute", "\"Set ...;Set ...\"", "-masterserver", "host:port", "-ascensionserver", "host:port".
-    ///     Every value in the "-execute" payload is escaped with <see cref="ConsoleEscaping.Escape"/>, so any character a value holds reaches the manager as written.
+    ///     Every value in the "-execute" payload is escaped with <see cref="ConsoleEscaping.Escape"/>, so any character a value holds reaches the match server manager as written.
     ///     The "-execute" payload carries its own literal double quotes because Heroes Of Newerth re-tokenises its command line and requires them; the caller passes the vector verbatim (via <see cref="ProcessStartInfo.ArgumentList"/> on Linux, or joined into <see cref="ProcessStartInfo.Arguments"/> on Windows) so those quotes survive to the process on both platforms.
     /// </summary>
     public static string[] Build(MatchServerManagerOptions options, PortPlan ports, string serverAddress, string masterServerHostAndPort, string artefactsDirectory)
     {
         int processorCount = Environment.ProcessorCount;
 
-        // The Order Of These Settings Is Immaterial: Each "Set" Command Is Applied Independently By The Manager
+        // The Order Of These Settings Is Immaterial: Each "Set" Command Is Applied Independently By The Match Server Manager
         Dictionary<string, string> settings = new ()
         {
-            // The Manager Opens This Port Itself And Exits When It Cannot
+            // The Match Server Manager Opens This Port Itself And Exits When It Cannot
             ["man_port"]                = ports.ManagerPort.ToString(),
 
-            // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Manager Appends An Incremental Index To This Value
+            // Append ":" So Game Server Instances Can Be Mapped To An Account Name, For Example "KONGOR:1" And "KONGOR:2"; The Match Server Manager Appends An Incremental Index To This Value
             ["man_masterLogin"]         = options.UserName + ":",
             ["man_masterPassword"]      = options.Password,
             ["man_numSlaveAccounts"]    = options.Instances.ToString(),
             ["man_startServerPort"]     = ports.LocalGameStart.ToString(),
             ["man_endServerPort"]       = ports.LocalGameEnd.ToString(),
 
-            // Historically Misnamed: This Is Effectively "man_voiceStartPort"; No Proxy Is Involved In The Manager's Voice Port Allocation
+            // Historically Misnamed: This Is Effectively "man_voiceStartPort"; No Proxy Is Involved In The Match Server Manager's Voice Port Allocation
             ["man_voiceProxyStartPort"] = ports.LocalVoiceStart.ToString(),
             ["man_voiceProxyEndPort"]   = ports.LocalVoiceEnd.ToString(),
 
@@ -38,8 +38,8 @@ public static class ManagerArguments
             ["man_autoServersPerCPU"]   = "1",
             ["man_allowCPUs"]           = string.Join(',', Enumerable.Range(0, processorCount)),
 
-            // Shorten The Manager's Re-Authentication Retry Interval From Its Five-Minute Default
-            // The Manager Re-Authenticates With The Master Server Only While It Is Disconnected From The Chat Server, So Lowering This Lets It Recover A Fresh Registration And Reconnect Within About Half A Minute After A Dropped Connection Instead Of Waiting Out The Default Cycle, At No Steady-State Cost
+            // Shorten The Match Server Manager's Re-Authentication Retry Interval From Its Five-Minute Default
+            // The Match Server Manager Re-Authenticates With The Master Server Only While It Is Disconnected From The Chat Server, So Lowering This Lets It Recover A Fresh Registration And Reconnect Within About Half A Minute After A Dropped Connection Instead Of Waiting Out The Default Cycle, At No Steady-State Cost
             // The Value Is In Milliseconds
             ["man_reauthFrequency"]     = "30000",
 
@@ -49,18 +49,18 @@ public static class ManagerArguments
             // Disables Partial Replay Uploads
             ["man_uploadToCDNOnDemand"] = "0",
 
-            // Any Server Configuration Options Other Than The Following Are Ignored By The Manager
+            // Any Server Configuration Options Other Than The Following Are Ignored By The Match Server Manager
             ["svr_name"]                = options.ServerNamePrefix,
             // The Validator Accepts The Location In Any Case, But The Master Server Compares Regions Exactly
             ["svr_location"]            = options.Location.ToUpperInvariant(),
             ["svr_ip"]                  = serverAddress,
 
-            // Leaves The Manager's CPU To The Operating System, As Every HON Process Does, And The Match Servers It Starts Are Not Pinned Either
+            // Leaves The Match Server Manager's CPU To The Operating System, As Every HON Process Does, And The Match Servers It Starts Are Not Pinned Either
             ["host_affinity"]           = "-1",
 
             ["upd_checkForUpdates"]     = "false",
 
-            // The Port On Which COMPEL Answers Master-Server Pings; The Manager Ignores This Value; COMPEL Binds It Itself
+            // The Port On Which COMPEL Answers Master-Server Pings; The Match Server Manager Ignores This Value; COMPEL Binds It Itself
             ["svr_port"]                = ports.PingPort.ToString()
         };
 

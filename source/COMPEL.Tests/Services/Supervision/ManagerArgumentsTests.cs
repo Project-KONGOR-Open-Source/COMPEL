@@ -1,7 +1,7 @@
 namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
-///     Verifies the command line built for the Heroes Of Newerth manager: the flag set the legacy COMPEL relied on, the new re-authentication frequency, the upper-casing of the server location, and the quoting the "-execute" payload requires to survive on both platforms.
+///     Verifies the command line built for the match server manager: the flag set the legacy COMPEL relied on, the new re-authentication frequency, the upper-casing of the server location, and the quoting the "-execute" payload requires to survive on both platforms.
 /// </summary>
 public sealed class ManagerArgumentsTests
 {
@@ -29,7 +29,7 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
-    public async Task The_Argument_Vector_Starts_With_The_Manager_And_Master_Server_Flags()
+    public async Task The_Argument_Vector_Starts_With_The_Match_Server_Manager_And_Master_Server_Flags()
     {
         string[] arguments = Build();
 
@@ -77,7 +77,7 @@ public sealed class ManagerArgumentsTests
 
         using (Assert.Multiple())
         {
-            // The Master Login Carries A Trailing Colon So The Manager Can Append A Per-Instance Index
+            // The Master Login Carries A Trailing Colon So The Match Server Manager Can Append A Per-Instance Index
             await Assert.That(joined.Contains(@"Set man_masterLogin KONGOR\:")).IsTrue();
             await Assert.That(joined.Contains("Set man_startServerPort 11235")).IsTrue();
             await Assert.That(joined.Contains("Set man_endServerPort 11236")).IsTrue();
@@ -149,7 +149,7 @@ public sealed class ManagerArgumentsTests
     }
 
     [Test]
-    public async Task The_Manager_Port_Comes_From_The_Port_Plan()
+    public async Task The_Match_Server_Manager_Port_Comes_From_The_Port_Plan()
     {
         string joined = string.Join(' ', Build());
 

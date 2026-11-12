@@ -69,7 +69,7 @@ if (configuration.ControlPlanePort.Value is < 1 or > 65535)
 }
 
 // COMPEL Mirrors The Distribution Into Its Installation Directory And Rewrites Its Own Files During A Self-Update, So Write Access Is A Requirement
-// The Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Artefacts Directory, And Report A Failure To Do So Only In Logs They Cannot Write Either, So Write Access Is A Requirement There Too
+// The Match Server Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Artefacts Directory, And Report A Failure To Do So Only In Logs They Cannot Write Either, So Write Access Is A Requirement There Too
 // Checked Up-Front Because The Alternative Is A Permission Failure Surfacing Part-Way Through A Multi-Gigabyte Synchronisation Or During An Update That Has Already Replaced Some Files
 string artefactsDirectory = new ArtefactsLocator(Options.Create(new MatchServerManagerOptions { RuntimeArtefactsPath = configuration.RuntimeArtefactsPath.Value })).ArtefactsDirectory;
 

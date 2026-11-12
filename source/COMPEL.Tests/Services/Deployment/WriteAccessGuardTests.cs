@@ -107,7 +107,7 @@ public sealed class WriteAccessGuardTests
         }
     }
 
-    // The Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Home Directory COMPEL Gives Them, On Every Platform
+    // The Match Server Manager And Its Match Servers Write Their Replays, Logs, And Settings Beneath The Home Directory COMPEL Gives Them, On Every Platform
     [Test]
     public async Task An_Unwritable_Artefacts_Directory_Is_The_Reported_Directory()
     {

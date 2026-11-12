@@ -52,7 +52,7 @@ public sealed class PortPlanTests
     }
 
     [Test]
-    public async Task The_Manager_Port_Moves_With_The_Offset()
+    public async Task The_Match_Server_Manager_Port_Moves_With_The_Offset()
     {
         using (Assert.Multiple())
         {
@@ -62,7 +62,7 @@ public sealed class PortPlanTests
     }
 
     [Test]
-    public async Task The_Manager_Port_Never_Meets_A_Game_Voice_Or_Ping_Port()
+    public async Task The_Match_Server_Manager_Port_Never_Meets_A_Game_Voice_Or_Ping_Port()
     {
         MatchServerManagerOptionsValidator validator = new ();
 

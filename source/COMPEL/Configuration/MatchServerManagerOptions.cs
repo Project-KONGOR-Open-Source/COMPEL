@@ -22,7 +22,7 @@ public sealed class MatchServerManagerOptions
     public int Instances { get; set; } = 1;
 
     /// <summary>
-    ///     The number of server instances the manager keeps idle (warm and ready to host) at any time; the remaining instances are put to sleep and woken on demand. Must be between zero and <see cref="Instances"/>.
+    ///     The number of server instances the match server manager keeps idle (warm and ready to host) at any time; the remaining instances are put to sleep and woken on demand. Must be between zero and <see cref="Instances"/>.
     /// </summary>
     public int WarmInstancesTarget { get; set; } = 1;
 
@@ -42,7 +42,7 @@ public sealed class MatchServerManagerOptions
     public string Location { get; set; } = "EU";
 
     /// <summary>
-    ///     The base name of the game server instances. The server manager appends the one-based index of each instance to this base name.
+    ///     The base name of the game server instances. The match server manager appends the one-based index of each instance to this base name.
     /// </summary>
     public string ServerNamePrefix { get; set; } = "KONGOR ARENA";
 

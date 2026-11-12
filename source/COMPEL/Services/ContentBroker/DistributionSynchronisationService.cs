@@ -3,7 +3,7 @@ namespace COMPEL.Services.ContentBroker;
 /// <summary>
 ///     Keeps the local match server distribution synchronised with the CDN.
 ///     On startup it performs an initial synchronisation (retried with backoff, or skipped if a local copy already exists, or skipped entirely when <see cref="CDNOptions.Synchronisation"/> is disabled) and exposes <see cref="SynchroniseNow"/> for the control plane to trigger a re-synchronisation on demand.
-///     The supervisor awaits <see cref="WaitUntilReady"/> before launching the manager.
+///     The supervisor awaits <see cref="WaitUntilReady"/> before launching the match server manager.
 /// </summary>
 public sealed class DistributionSynchronisationService : BackgroundService
 {
@@ -30,7 +30,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
     public string SynchronisationState { get; private set; } = "Pending";
 
     /// <summary>
-    ///     Whether a synchronisation is currently rewriting the installation directory. The supervisor consults this so it never launches the manager against a half-rewritten distribution.
+    ///     Whether a synchronisation is currently rewriting the installation directory. The supervisor consults this so it never launches the match server manager against a half-rewritten distribution.
     /// </summary>
     public bool IsSynchronising => synchronising;
 
@@ -59,12 +59,12 @@ public sealed class DistributionSynchronisationService : BackgroundService
     }
 
     /// <summary>
-    ///     The path to the manager executable within the installed distribution.
+    ///     The path to the match server manager executable within the installed distribution.
     /// </summary>
     public string ManagerExecutablePath => Path.Combine(InstallationDirectory, HeroesOfNewerthExecutable.FileName);
 
     /// <summary>
-    ///     Completes once the distribution has been synchronised, or once an existing local copy has been accepted when the CDN is unreachable or synchronisation is disabled. The supervisor awaits this before launching the manager.
+    ///     Completes once the distribution has been synchronised, or once an existing local copy has been accepted when the CDN is unreachable or synchronisation is disabled. The supervisor awaits this before launching the match server manager.
     /// </summary>
     public Task WaitUntilReady(CancellationToken cancellationToken) => ready.Task.WaitAsync(cancellationToken);
 
@@ -115,11 +115,11 @@ public sealed class DistributionSynchronisationService : BackgroundService
             {
                 SynchronisationSummary summary = await SynchroniseNow(stoppingToken).ConfigureAwait(false);
 
-                // A Synchronisation That Reports No Exception Can Still Have Failed To Fetch Individual Files, Which Would Leave A Mixed-Version Tree; Only Stop Retrying Once Every File Transferred And The Manager Executable Is Present
+                // A Synchronisation That Reports No Exception Can Still Have Failed To Fetch Individual Files, Which Would Leave A Mixed-Version Tree; Only Stop Retrying Once Every File Transferred And The Match Server Manager Executable Is Present
                 if (summary.FilesFailed is 0 && File.Exists(ManagerExecutablePath))
                     break;
 
-                // With No Failed Files The Only Reason Left To Retry Is A Distribution That Does Not Contain The Manager Executable, Which The Per-File Lines Cannot Show
+                // With No Failed Files The Only Reason Left To Retry Is A Distribution That Does Not Contain The Match Server Manager Executable, Which The Per-File Lines Cannot Show
                 if (summary.FilesFailed is 0)
                     logger.LogWarning(@"FAIL: The Match Server Manager's Executable ""{Executable}"" Is Not Part Of The Synchronised Distribution", ManagerExecutablePath);
 
@@ -133,7 +133,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
             catch (Exception)
             {
-                // The Failure Itself Was Logged By "SynchroniseNow"; If A Previous Synchronisation Already Installed The Manager, The Launch Proceeds With It Rather Than Blocking On A Transient CDN Outage
+                // The Failure Itself Was Logged By "SynchroniseNow"; If A Previous Synchronisation Already Installed The Match Server Manager, The Launch Proceeds With It Rather Than Blocking On A Transient CDN Outage
                 if (File.Exists(ManagerExecutablePath))
                 {
                     logger.LogWarning("Proceeding With The Existing Local Distribution At {InstallationDirectory}", InstallationDirectory);
@@ -205,7 +205,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
                 catch (Exception exception) { logger.LogWarning("FAIL: The Lock Scan Failed :: {ExceptionType} :: {Message}", exception.GetType().Name, exception.Message); }
             }
 
-            // Release Consumers Only Once Every File Transferred And The Manager Executable Is Present; A Synchronisation That Failed To Fetch Some Files Would Leave A Mixed-Version Tree, So The Manager Must Not Be Launched Against It
+            // Release Consumers Only Once Every File Transferred And The Match Server Manager Executable Is Present; A Synchronisation That Failed To Fetch Some Files Would Leave A Mixed-Version Tree, So The Match Server Manager Must Not Be Launched Against It
             if (summary.FilesFailed is 0 && File.Exists(ManagerExecutablePath))
                 ready.TrySetResult();
 
@@ -268,7 +268,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
 
     /// <summary>
     ///     Retries the manifest fetch until the distribution version is known, for the case where the fetch failed and the existing local distribution was accepted.
-    ///     Only the manifest is fetched, never the files, because the manager may already be running against this installation by the time this runs.
+    ///     Only the manifest is fetched, never the files, because the match server manager may already be running against this installation by the time this runs.
     ///     Each failed attempt is logged at debug level so a long outage does not flood the log; the ping responder rebuilds its template as soon as the version arrives.
     /// </summary>
     private async Task RecoverDistributionVersion(CancellationToken stoppingToken)

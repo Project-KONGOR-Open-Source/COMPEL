@@ -66,7 +66,7 @@ public sealed class AddressResolver
     }
 
     /// <summary>
-    ///     The master server host and port passed to the manager via the "-masterserver" and "-ascensionserver" arguments.
+    ///     The master server host and port passed to the match server manager via the "-masterserver" and "-ascensionserver" arguments.
     /// </summary>
     public string MasterServerHostAndPort => manager.MasterServer;
 
