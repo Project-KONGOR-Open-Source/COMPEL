@@ -52,14 +52,14 @@ COMPEL does not require elevated privileges. It needs write access to its instal
 
 ## Control Plane
 
-| Method | Route                                                       | Authentication | Purpose                                                                              |
-| ------ | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------ |
-| `GET`  | `/ping`                                                     | none           | Latency probe.                                                                       |
-| `GET`  | `/health`, `/alive`                                         | none           | Readiness and liveness.                                                              |
+| Method | Route                                                       | Authentication | Purpose                                                                                           |
+| ------ | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
+| `GET`  | `/ping`                                                     | none           | Latency probe.                                                                                    |
+| `GET`  | `/health`, `/alive`                                         | none           | Readiness and liveness.                                                                           |
 | `GET`  | `/status`                                                   | bearer         | Configuration, ports, distribution version, sync state, match server manager/proxy state, uptime. |
-| `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                    |
-| `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                      |
-| `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                    |
+| `POST` | `/sync`                                                     | bearer         | Trigger a CDN re-synchronisation.                                                                 |
+| `POST` | `/instances/start`, `/instances/stop`, `/instances/restart` | bearer         | Manage match server lifecycles.                                                                   |
+| `POST` | `/proxy/restart`                                            | bearer         | Restart the UDP proxy forwarders.                                                                 |
 
 Authenticate management requests with `Authorization: Bearer <ControlPlaneAuthenticationToken>`, using the `ControlPlaneAuthenticationToken` from `COMPEL.json`.
 
