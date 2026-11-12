@@ -70,12 +70,12 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
                 break;
 
             case PrerequisitesCheckOutcome.Missing:
-                logger.LogError("FAIL: Missing Prerequisites; The Manager Will Not Be Launched");
+                logger.LogError("FAIL: Missing Prerequisites; The Match Server Manager Will Not Be Launched");
                 logger.LogError("{Report}", prerequisites.Report);
                 return;
 
             default:
-                logger.LogError("FAIL: The Prerequisites Check Could Not Run :: {Report}; The Manager Will Not Be Launched", prerequisites.Report);
+                logger.LogError("FAIL: The Prerequisites Check Could Not Run :: {Report}; The Match Server Manager Will Not Be Launched", prerequisites.Report);
                 return;
         }
 
@@ -119,7 +119,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
             if (proxyReady is false)
             {
-                logger.LogError("The Proxy Is Enabled But No Public Port Could Be Bound; The Manager Will Not Be Launched");
+                logger.LogError("The Proxy Is Enabled But No Public Port Could Be Bound; The Match Server Manager Will Not Be Launched");
 
                 return;
             }
@@ -194,7 +194,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
         string executable = distribution.ManagerExecutablePath;
 
         if (File.Exists(executable) is false)
-            throw new FileNotFoundException($@"Manager Executable Was Not Found At ""{executable}""");
+            throw new FileNotFoundException($@"Match Server Manager's Executable Was Not Found At ""{executable}""");
 
         // The Synchronised Server Binary Arrives Without The Unix Execute Bit, So It Is Set Here Before Every Launch (On Windows This Is A No-Op)
         EnsureExecutable(executable);
@@ -429,7 +429,7 @@ public sealed class MatchServerManagerSupervisor : BackgroundService
 
         logger.LogInformation
         (
-            "Port Allocation: Game {LocalGameStart}-{LocalGameEnd}, Voice {LocalVoiceStart}-{LocalVoiceEnd}, Public Game {PublicGameStart}-{PublicGameEnd}, Public Voice {PublicVoiceStart}-{PublicVoiceEnd}, Ping {PingPort}, Manager {ManagerPort}{ProxyNote}",
+            "Port Allocation: Game {LocalGameStart}-{LocalGameEnd}, Voice {LocalVoiceStart}-{LocalVoiceEnd}, Public Game {PublicGameStart}-{PublicGameEnd}, Public Voice {PublicVoiceStart}-{PublicVoiceEnd}, Ping {PingPort}, Match Server Manager {ManagerPort}{ProxyNote}",
             Ports.LocalGameStart, Ports.LocalGameEnd, Ports.LocalVoiceStart, Ports.LocalVoiceEnd,
             Ports.PublicGameStart, Ports.PublicGameEnd, Ports.PublicVoiceStart, Ports.PublicVoiceEnd,
             Ports.PingPort, Ports.ManagerPort, Ports.UseProxy ? " (Proxy Enabled)" : string.Empty

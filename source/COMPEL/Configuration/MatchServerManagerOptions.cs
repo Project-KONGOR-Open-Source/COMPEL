@@ -32,7 +32,7 @@ public sealed class MatchServerManagerOptions
     public string Gateway { get; set; } = "kongor.net";
 
     /// <summary>
-    ///     Where COMPEL and its manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path.
+    ///     Where COMPEL and its match server manager find the master server (NEXUS): a host name or an IP address with an optional port, without a scheme or a path.
     /// </summary>
     public string MasterServer { get; set; } = "api.kongor.net";
 

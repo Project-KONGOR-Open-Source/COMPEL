@@ -102,7 +102,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
             int commandLength = arguments[Array.IndexOf(arguments, "-execute") + 1].Length - 2;
 
             if (commandLength >= ConsoleEscaping.CommandLimit)
-                failures.Add($@"The Settings Passed To The Manager Take {commandLength} Characters, Which Reaches The Console's Limit Of {ConsoleEscaping.CommandLimit}; Shorten ""UserName"", ""Password"", Or ""ServerNamePrefix""");
+                failures.Add($@"The Settings Passed To The Match Server Manager Take {commandLength} Characters, Which Reaches The Console's Limit Of {ConsoleEscaping.CommandLimit}; Shorten ""UserName"", ""Password"", Or ""ServerNamePrefix""");
         }
 
         return failures.Count is 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
