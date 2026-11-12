@@ -186,7 +186,7 @@ try
 
     bool masterServerReachable;
 
-    // The Stop Signals Cancel The Wait Here; The Registrations End With It, So The Host's Own Handling Applies Once It Runs
+    // The Stop Signals Cancel The Wait Here; The Registrations End With It, So The Host's Own Handling Applies Once It Runs; A Stop Signal That Lands After The Last Request Succeeded Still Counts, So It Is Checked Before COMPEL Starts
     using (CancellationTokenSource waitCancellation = new ())
     {
         void CancelWait(PosixSignalContext context)
@@ -205,7 +205,7 @@ try
 
             if (attempt is 0)
                 logger.Log(LogCategory.Initialise, @"COMPEL Waits Until It Answers; Check ""MasterServer"" If It Should Already Be Running");
-        }, waitCancellation.Token);
+        }, waitCancellation.Token) && waitCancellation.IsCancellationRequested is false;
     }
 
     if (masterServerReachable is false)

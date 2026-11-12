@@ -1,3 +1,5 @@
+using TUnit.Assertions.Enums;
+
 namespace COMPEL.Tests.Services.Supervision;
 
 /// <summary>
@@ -74,7 +76,7 @@ public sealed class MasterServerProbeTests
     {
         int[] seconds = [.. Enumerable.Range(0, 7).Select(attempt => (int) MasterServerProbe.RetryDelay(attempt).TotalSeconds)];
 
-        await Assert.That(seconds).IsEquivalentTo(new[] { 1, 2, 4, 8, 16, 30, 30 });
+        await Assert.That(seconds).IsEquivalentTo(new[] { 1, 2, 4, 8, 16, 30, 30 }, CollectionOrdering.Matching);
     }
 
     [Test]
@@ -108,18 +110,22 @@ public sealed class MasterServerProbeTests
     {
         QueueHandler handler = new (new ([Answer(HttpStatusCode.ServiceUnavailable), Failure(), Answer(HttpStatusCode.OK)]));
         List<TimeSpan> delays = [];
+        List<CancellationToken> delayTokens = [];
+        using CancellationTokenSource source = new ();
         List<(int Attempt, TimeSpan Delay)> waits = [];
 
         using HttpClient client = new (handler);
 
-        bool reachable = await MasterServerProbe.WaitUntilReachable(client, "localhost:5555", (delay, _) => { delays.Add(delay); return Task.CompletedTask; }, (attempt, delay) => waits.Add((attempt, delay)), CancellationToken.None);
+        bool reachable = await MasterServerProbe.WaitUntilReachable(client, "localhost:5555", (delay, token) => { delays.Add(delay); delayTokens.Add(token); return Task.CompletedTask; }, (attempt, delay) => waits.Add((attempt, delay)), source.Token);
 
         using (Assert.Multiple())
         {
             await Assert.That(reachable).IsTrue();
             await Assert.That(handler.RequestCount).IsEqualTo(3);
-            await Assert.That(waits).IsEquivalentTo(new[] { (0, TimeSpan.FromSeconds(1)), (1, TimeSpan.FromSeconds(2)) });
-            await Assert.That(delays).IsEquivalentTo(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) });
+            await Assert.That(waits).IsEquivalentTo(new[] { (0, TimeSpan.FromSeconds(1)), (1, TimeSpan.FromSeconds(2)) }, CollectionOrdering.Matching);
+            await Assert.That(delays).IsEquivalentTo(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) }, CollectionOrdering.Matching);
+            await Assert.That(delayTokens.All(token => token == source.Token)).IsTrue();
+            await Assert.That(delayTokens.Count).IsEqualTo(2);
         }
     }
 
@@ -179,9 +185,13 @@ public sealed class MasterServerProbeTests
     {
         using CancellationTokenSource source = new ();
 
-        QueueHandler handler = new (new ([_ =>
+        bool requestTokenCancelled = false;
+
+        QueueHandler handler = new (new ([token =>
         {
             source.Cancel();
+
+            requestTokenCancelled = token.IsCancellationRequested;
 
             throw new TaskCanceledException();
         }]));
@@ -196,6 +206,7 @@ public sealed class MasterServerProbeTests
         using (Assert.Multiple())
         {
             await Assert.That(reachable).IsFalse();
+            await Assert.That(requestTokenCancelled).IsTrue();
             await Assert.That(waitCalls).IsEqualTo(0);
             await Assert.That(delayCalls).IsEqualTo(0);
         }
@@ -216,8 +227,8 @@ public sealed class MasterServerProbeTests
         {
             await Assert.That(reachable).IsTrue();
             await Assert.That(handler.RequestCount).IsEqualTo(2);
-            await Assert.That(waits).IsEquivalentTo(new[] { (0, TimeSpan.FromSeconds(1)) });
-            await Assert.That(delays).IsEquivalentTo(new[] { TimeSpan.FromSeconds(1) });
+            await Assert.That(waits).IsEquivalentTo(new[] { (0, TimeSpan.FromSeconds(1)) }, CollectionOrdering.Matching);
+            await Assert.That(delays).IsEquivalentTo(new[] { TimeSpan.FromSeconds(1) }, CollectionOrdering.Matching);
         }
     }
 }

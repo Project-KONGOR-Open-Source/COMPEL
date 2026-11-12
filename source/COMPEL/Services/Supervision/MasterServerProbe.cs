@@ -33,7 +33,7 @@ public static class MasterServerProbe
             return response.IsSuccessStatusCode;
         }
 
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException)
         {
             return false;
         }
