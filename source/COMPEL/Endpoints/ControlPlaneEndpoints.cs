@@ -1,7 +1,7 @@
 namespace COMPEL.Endpoints;
 
 /// <summary>
-///     Maps the HTTP control plane: an anonymous latency probe plus the bearer-token-protected management endpoints that NEXUS and host operators use to query status and drive lifecycle actions.
+///     Maps the HTTP control plane: an anonymous latency probe plus the bearer-token-protected management endpoints that the master server and host operators use to query status and drive lifecycle actions.
 /// </summary>
 public static class ControlPlaneEndpoints
 {

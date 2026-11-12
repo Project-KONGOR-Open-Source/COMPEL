@@ -160,7 +160,7 @@ public sealed class DistributionSynchronisationService : BackgroundService
     }
 
     /// <summary>
-    ///     Fetches the manifest and synchronises the installation directory, logging each step in WILLOWMAKER's vocabulary. Safe to call concurrently; calls are serialised.
+    ///     Fetches the manifest and synchronises the installation directory, logging each step. Safe to call concurrently; calls are serialised.
     ///     Every failure is logged here before it propagates, so the start-up loop and the control plane only decide what to do next.
     /// </summary>
     public async Task<SynchronisationSummary> SynchroniseNow(CancellationToken cancellationToken)

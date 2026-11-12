@@ -10,7 +10,7 @@ public sealed partial class MatchServerManagerOptionsValidator : IValidateOption
 
     private static readonly string[] SupportedAliases = [ "DEFAULT" ];
 
-    // The Characters NEXUS Accepts In An Account Name; Its Lengths Differ Between Development And Production, So They Are Not Checked Here
+    // The Characters The Master Server Accepts In An Account Name; Its Lengths Differ Between Development And Production, So They Are Not Checked Here
     [GeneratedRegex(@"^[a-zA-Z0-9_\-]+\z")]
     private static partial Regex AccountNamePattern();
 

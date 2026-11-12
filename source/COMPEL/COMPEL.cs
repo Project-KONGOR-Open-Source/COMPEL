@@ -9,7 +9,7 @@ if (ConfigurationLoader.Exists() is false)
     return;
 }
 
-// Every Message From Here On Goes Through The Logger So The Console And "COMPEL.log" Carry The Same Session, Opened By A Session Header As In WILLOWMAKER
+// Every Message From Here On Goes Through The Logger So The Console And "COMPEL.log" Carry The Same Session, Opened By A Session Header
 string logFilePath = Path.Combine(AppContext.BaseDirectory, DeploymentManifest.LogFileName);
 
 Logger logger;
@@ -141,7 +141,7 @@ builder.Services.AddOptions<CDNOptions>().Configure(options =>
 // JSON: Source-Generated Serialisation Metadata For The Minimal-API Responses (Required Under Native AOT)
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Insert(0, ControlPlaneJSONContext.Default));
 
-// Logging: The Hosted Services Log Through The Same Logger As The Start-Up Messages, So The Console And The Log File Read As One Stream In WILLOWMAKER's Format
+// Logging: The Hosted Services Log Through The Same Logger As The Start-Up Messages, So The Console And The Log File Read As One Stream
 // Level Filtering Stays With The Host; Framework Chatter Is Limited To Warnings Except For The Lifetime Messages That Mark The Host Starting And Stopping
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new LoggerProvider(logger));

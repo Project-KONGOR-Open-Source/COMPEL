@@ -22,7 +22,7 @@ internal sealed class LoggerProvider(Logger logger) : ILoggerProvider
         {
             string message = formatter(state, exception);
 
-            // WILLOWMAKER Records A Failure As The Exception's Type And Message On The Same Line, So The Same Shape Is Used Here Rather Than A Stack Trace
+            // The Launcher Records A Failure As The Exception's Type And Message On The Same Line, So The Same Shape Is Used Here Rather Than A Stack Trace
             if (exception is not null)
                 message = $"{message} :: {exception.GetType().Name} :: {exception.Message}";
 

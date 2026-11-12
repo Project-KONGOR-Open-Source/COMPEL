@@ -2,7 +2,7 @@ namespace COMPEL.Constants;
 
 /// <summary>
 ///     Defines the available log entry categories, padded to a fixed width so the category column aligns in the log.
-///     The first six mirror WILLOWMAKER's categories; the remainder cover the services a match server host runs that a launcher does not.
+///     The first six mirror the launcher's categories; the remainder cover the services a match server host runs that a launcher does not.
 /// </summary>
 public static class LogCategory
 {
