@@ -200,4 +200,24 @@ public sealed class MasterServerProbeTests
             await Assert.That(delayCalls).IsEqualTo(0);
         }
     }
+
+    [Test]
+    public async Task A_Request_Timeout_Keeps_Waiting()
+    {
+        QueueHandler handler = new (new ([_ => throw new TaskCanceledException(), Answer(HttpStatusCode.OK)]));
+        List<TimeSpan> delays = [];
+        List<(int Attempt, TimeSpan Delay)> waits = [];
+
+        using HttpClient client = new (handler);
+
+        bool reachable = await MasterServerProbe.WaitUntilReachable(client, "localhost:5555", (delay, _) => { delays.Add(delay); return Task.CompletedTask; }, (attempt, delay) => waits.Add((attempt, delay)), CancellationToken.None);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(reachable).IsTrue();
+            await Assert.That(handler.RequestCount).IsEqualTo(2);
+            await Assert.That(waits).IsEquivalentTo(new[] { (0, TimeSpan.FromSeconds(1)) });
+            await Assert.That(delays).IsEquivalentTo(new[] { TimeSpan.FromSeconds(1) });
+        }
+    }
 }

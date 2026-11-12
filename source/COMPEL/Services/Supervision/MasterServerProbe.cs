@@ -6,6 +6,16 @@ namespace COMPEL.Services.Supervision;
 public static class MasterServerProbe
 {
     /// <summary>
+    ///     The wait after the first failed attempt.
+    /// </summary>
+    public static readonly TimeSpan FirstRetryDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    ///     The longest wait between two attempts, which the waits grow towards.
+    /// </summary>
+    public static readonly TimeSpan LongestRetryDelay = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     ///     The health address of the given master server, which is a host name or an IP address with an optional port.
     /// </summary>
     public static Uri HealthAddress(string masterServer) => new ($"http://{masterServer}/health");
@@ -28,16 +38,6 @@ public static class MasterServerProbe
             return false;
         }
     }
-
-    /// <summary>
-    ///     The wait after the first failed attempt.
-    /// </summary>
-    public static readonly TimeSpan FirstRetryDelay = TimeSpan.FromSeconds(1);
-
-    /// <summary>
-    ///     The longest wait between two attempts, which the waits grow towards.
-    /// </summary>
-    public static readonly TimeSpan LongestRetryDelay = TimeSpan.FromSeconds(30);
 
     /// <summary>
     ///     The wait after the given failed attempt, counted from zero: the first wait doubled once per attempt, and never longer than the longest wait.

@@ -199,16 +199,12 @@ try
         using PosixSignalRegistration quit = PosixSignalRegistration.Create(PosixSignal.SIGQUIT, CancelWait);
         using PosixSignalRegistration terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, CancelWait);
 
-        bool firstWait = true;
-
-        masterServerReachable = await MasterServerProbe.WaitUntilReachable(masterServerClient, configuration.MasterServer.Value, Task.Delay, (_, delay) =>
+        masterServerReachable = await MasterServerProbe.WaitUntilReachable(masterServerClient, configuration.MasterServer.Value, Task.Delay, (attempt, delay) =>
         {
             logger.Log(LogCategory.Initialise, $@"The Master Server At ""{MasterServerProbe.HealthAddress(configuration.MasterServer.Value)}"" Is Not Reachable Yet; Trying Again In {delay.TotalSeconds} Second(s)");
 
-            if (firstWait)
+            if (attempt is 0)
                 logger.Log(LogCategory.Initialise, @"COMPEL Waits Until It Answers; Check ""MasterServer"" If It Should Already Be Running");
-
-            firstWait = false;
         }, waitCancellation.Token);
     }
 
